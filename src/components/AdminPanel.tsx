@@ -5,6 +5,7 @@
 
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
+import * as XLSX from 'xlsx';
 import { 
   Lock, 
   Unlock, 
@@ -24,6 +25,8 @@ import {
   User,
   PlusCircle,
   Clock,
+  HelpCircle,
+  CheckCircle,
   X
 } from 'lucide-react';
 import { useDatabase } from '../context/DatabaseContext';
@@ -39,11 +42,14 @@ export const AdminPanel: React.FC = () => {
     updatePurchase, 
     deletePurchase,
     setupAdminPassword, 
-    verifyAdminPassword 
+    verifyAdminPassword,
+    varieties,
+    storageLocations,
+    updateOptions
   } = useDatabase();
 
   // Authentication States
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [isAuthenticated, setIsAuthenticated ] = useState(false);
   const [passwordInput, setPasswordInput] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -51,11 +57,12 @@ export const AdminPanel: React.FC = () => {
   const [setupFeedback, setSetupFeedback] = useState('');
 
   // Tab Manager State
-  const [activeTab, setActiveTab] = useState<'inventory' | 'shelling' | 'reports'>('inventory');
+  const [activeTab, setActiveTab] = useState<'inventory' | 'shelling' | 'reports' | 'options'>('inventory');
 
   // Editing state for Purchases (Inline modal)
   const [editingPurchase, setEditingPurchase] = useState<PurchaseRecord | null>(null);
   const [editFarmerName, setEditFarmerName] = useState('');
+  const [editIsResume, setEditIsResume] = useState(false);
   const [editLocation, setEditLocation] = useState('');
   const [editDate, setEditDate] = useState('');
   const [editVariety, setEditVariety] = useState('');
@@ -64,12 +71,66 @@ export const AdminPanel: React.FC = () => {
   const [editTotalWeightCatty, setEditTotalWeightCatty] = useState<number>(0);
   const [editStorageLocation, setEditStorageLocation] = useState('');
 
+  // Selections Panel State (Settings Tab)
+  const [newVariety, setNewVariety] = useState('');
+  const [newStorageLocation, setNewStorageLocation] = useState('');
+
   // Shelling Form States
   const [selectedSourceIds, setSelectedSourceIds] = useState<string[]>([]);
+  const [selectedBags, setSelectedBags] = useState<Record<string, number>>({});
   const [shellingDate, setShellingDate] = useState(new Date().toISOString().split('T')[0]);
   const [outputWeightKg, setOutputWeightKg] = useState<number | ''>('');
   const [moisture, setMoisture] = useState<number | ''>('');
   const [shellingFeedback, setShellingFeedback] = useState<{ type: 'success' | 'error', msg: string } | null>(null);
+
+  // Export Date Range States
+  const [exportStartDate, setExportStartDate] = useState(() => {
+    const d = new Date();
+    // Default to 1st of current month
+    return new Date(d.getFullYear(), d.getMonth(), 1).toISOString().split('T')[0];
+  });
+  const [exportEndDate, setExportEndDate] = useState(() => {
+    return new Date().toISOString().split('T')[0];
+  });
+
+  // Custom Modal (Dialog & Confirmation) States
+  const [modalConfig, setModalConfig] = useState<{
+    isOpen: boolean;
+    type: 'alert' | 'confirm' | 'success';
+    title: string;
+    message: string;
+    onConfirm?: () => Promise<void> | void;
+  }>({
+    isOpen: false,
+    type: 'alert',
+    title: '',
+    message: '',
+    onConfirm: undefined
+  });
+
+  const showCustomAlert = (title: string, message: string, type: 'alert' | 'success' = 'alert') => {
+    setModalConfig({
+      isOpen: true,
+      type,
+      title,
+      message,
+      onConfirm: undefined
+    });
+  };
+
+  const showCustomConfirm = (title: string, message: string, onConfirm: () => Promise<void> | void) => {
+    setModalConfig({
+      isOpen: true,
+      type: 'confirm',
+      title,
+      message,
+      onConfirm
+    });
+  };
+
+  const closeCustomModal = () => {
+    setModalConfig(prev => ({ ...prev, isOpen: false }));
+  };
 
   // ---------------- AUTHENTICATION GATES ----------------
 
@@ -226,6 +287,7 @@ export const AdminPanel: React.FC = () => {
   const handleEditOpen = (p: PurchaseRecord) => {
     setEditingPurchase(p);
     setEditFarmerName(p.farmerName);
+    setEditIsResume(!!p.isResume);
     setEditLocation(p.location);
     setEditDate(p.date);
     setEditVariety(p.variety);
@@ -247,6 +309,7 @@ export const AdminPanel: React.FC = () => {
     try {
       await updatePurchase(editingPurchase.id, {
         farmerName: editFarmerName.trim(),
+        isResume: editIsResume,
         location: editLocation.trim(),
         date: editDate,
         variety: editVariety.trim(),
@@ -275,12 +338,30 @@ export const AdminPanel: React.FC = () => {
     }
   };
 
+  // Find remaining bags of a purchase record, considering other shelling batches.
+  const getRemainingBags = (p: PurchaseRecord) => {
+    let used = 0;
+    shellingBatches.forEach(b => {
+      if (b.sourceBagsUsed && b.sourceBagsUsed[p.id] !== undefined) {
+        used += b.sourceBagsUsed[p.id];
+      } else if (b.sourceBatchIds.includes(p.id)) {
+        // Fallback for legacy batches (pre-existing) which used all bags
+        used += p.totalBags;
+      }
+    });
+    return Math.max(0, p.totalBags - used);
+  };
+
   // Shelling logic calculations
   // Get all unique selected purchases objects
   const selectedPurchases = purchases.filter(p => selectedSourceIds.includes(p.id));
   
-  // Total input weight in Taiwan catties (台斤)
-  const totalInputCatty = selectedPurchases.reduce((acc, p) => acc + p.totalWeightCatty, 0);
+  // Total input weight in Taiwan catties (台斤) - calculated proportionally to manually input bags
+  const totalInputCatty = selectedPurchases.reduce((acc, p) => {
+    const bagsUsed = selectedBags[p.id] || 0;
+    const itemWeight = p.totalBags > 0 ? (p.totalWeightCatty * (bagsUsed / p.totalBags)) : 0;
+    return acc + itemWeight;
+  }, 0);
   
   // Conversion formula: 1 台斤 = 0.6 公斤
   const totalInputKg = totalInputCatty * 0.6;
@@ -292,16 +373,39 @@ export const AdminPanel: React.FC = () => {
 
   // Toggle Source Batches selection
   const handleToggleSource = (id: string) => {
-    setSelectedSourceIds(prev => 
-      prev.includes(id) ? prev.filter(item => item !== id) : [...prev, id]
-    );
+    const p = purchases.find(item => item.id === id);
+    if (!p) return;
+    const remaining = getRemainingBags(p);
+
+    setSelectedSourceIds(prev => {
+      if (prev.includes(id)) {
+        const updatedBags = { ...selectedBags };
+        delete updatedBags[id];
+        setSelectedBags(updatedBags);
+        return prev.filter(item => item !== id);
+      } else {
+        setSelectedBags(prevBags => ({
+          ...prevBags,
+          [id]: remaining
+        }));
+        return [...prev, id];
+      }
+    });
   };
 
   const handleSelectAllPurchases = () => {
-    if (selectedSourceIds.length === purchases.length) {
+    const availablePurchases = purchases.filter(p => getRemainingBags(p) > 0);
+    if (selectedSourceIds.length === availablePurchases.length) {
       setSelectedSourceIds([]);
+      setSelectedBags({});
     } else {
-      setSelectedSourceIds(purchases.map(p => p.id));
+      const allIds = availablePurchases.map(p => p.id);
+      setSelectedSourceIds(allIds);
+      const allBags: Record<string, number> = {};
+      availablePurchases.forEach(p => {
+        allBags[p.id] = getRemainingBags(p);
+      });
+      setSelectedBags(allBags);
     }
   };
 
@@ -312,6 +416,21 @@ export const AdminPanel: React.FC = () => {
     if (selectedSourceIds.length === 0) {
       return setShellingFeedback({ type: 'error', msg: '請勾選至少一筆花生來源貨源批次！' });
     }
+
+    // Validate manually input bag counts
+    for (const id of selectedSourceIds) {
+      const p = purchases.find(item => item.id === id);
+      if (!p) continue;
+      const bCount = selectedBags[id];
+      const remaining = getRemainingBags(p);
+      if (typeof bCount !== 'number' || bCount <= 0) {
+        return setShellingFeedback({ type: 'error', msg: `請為農民「${p.farmerName}」的花生貨源填寫大於 0 的使用包數！` });
+      }
+      if (bCount > remaining) {
+        return setShellingFeedback({ type: 'error', msg: `農民「${p.farmerName}」的花生貨源最多僅剩 ${remaining} 包可供使用！` });
+      }
+    }
+
     if (typeof outputWeightKg !== 'number' || outputWeightKg <= 0) {
       return setShellingFeedback({ type: 'error', msg: '請填寫正確的總產出重量（公斤）！' });
     }
@@ -323,6 +442,7 @@ export const AdminPanel: React.FC = () => {
       await addShellingBatch({
         date: shellingDate,
         sourceBatchIds: selectedSourceIds,
+        sourceBagsUsed: selectedBags,
         outputWeightKg,
         recoveryRate: calculatedRecoveryRate,
         moisture
@@ -330,11 +450,12 @@ export const AdminPanel: React.FC = () => {
 
       setShellingFeedback({
         type: 'success',
-        msg: `成功登錄脫殼批次！累計消化 ${totalInputCatty.toLocaleString()} 台斤毛料。`
+        msg: `成功登錄脫殼批次！累計消化 ${totalInputCatty.toLocaleString(undefined, { maximumFractionDigits: 1 })} 台斤毛料。`
       });
 
       // Reset Form fields
       setSelectedSourceIds([]);
+      setSelectedBags({});
       setOutputWeightKg('');
       setMoisture('');
     } catch (err) {
@@ -355,70 +476,287 @@ export const AdminPanel: React.FC = () => {
     }
   };
 
-  // Export Shelling Batch to two separate CSV files (simulating worksheets)
+  // Export Shelling Batch to a single workbook containing exactly two separate Worksheets
   const handleExportCSV = (batch: ShellingBatch) => {
     // Collect related sources details
     const relatedSources = purchases.filter(p => batch.sourceBatchIds.includes(p.id));
     
-    // Total raw catty weight in this batch
-    const rawCattySum = relatedSources.reduce((sum, p) => sum + p.totalWeightCatty, 0);
+    // Total raw catty weight in this batch (considering proportional bags used!)
+    const rawCattySum = relatedSources.reduce((sum, p) => {
+      const bagsUsed = batch.sourceBagsUsed && batch.sourceBagsUsed[p.id] !== undefined
+        ? batch.sourceBagsUsed[p.id]
+        : p.totalBags;
+      const weightUsed = p.totalBags > 0 ? (p.totalWeightCatty * (bagsUsed / p.totalBags)) : 0;
+      return sum + weightUsed;
+    }, 0);
     const rawKgSum = rawCattySum * 0.6;
 
-    // Calculate Purchase Cost Statistics
-    const totalCost = relatedSources.reduce((sum, p) => sum + (p.price * p.totalWeightCatty), 0);
+    // Calculate Purchase Cost Statistics based on proportional bags used
+    const totalCost = relatedSources.reduce((sum, p) => {
+      const bagsUsed = batch.sourceBagsUsed && batch.sourceBagsUsed[p.id] !== undefined
+        ? batch.sourceBagsUsed[p.id]
+        : p.totalBags;
+      const weightUsed = p.totalBags > 0 ? (p.totalWeightCatty * (bagsUsed / p.totalBags)) : 0;
+      return sum + (p.price * weightUsed);
+    }, 0);
+
     const avgPrice = rawCattySum > 0 ? totalCost / rawCattySum : 0;
     const rawMaterialCostPerFinishedKg = batch.outputWeightKg > 0 ? totalCost / batch.outputWeightKg : 0;
 
-    // 1. Generate Shelling Work Sheet (脫殼作業報表)
+    // 1. Generate Shelling Work Sheet Table (脫殼作業報表)
+    const shellingTable = [
+      [
+        "加工批號(Batch ID)", "代工脫殼日期", "加工品項說明", 
+        "進料總重(台斤)", "進料公制重(公斤)", "脫殼出產重量(公斤)", 
+        "出肉率(成品率%)", "測量水分(%)", "合計毛料收購成本(元)", 
+        "成品每公斤原料收購成本(元/公斤)", "成品存放倉儲"
+      ],
+      [
+        batch.id, batch.date, "多來源混合/合夥代工加工", 
+        parseFloat(rawCattySum.toFixed(1)), parseFloat(rawKgSum.toFixed(1)), batch.outputWeightKg, 
+        `${batch.recoveryRate}%`, `${batch.moisture}%`, parseFloat(totalCost.toFixed(0)), 
+        parseFloat(rawMaterialCostPerFinishedKg.toFixed(2)), "脫殼完成出口倉"
+      ]
+    ];
+
+    // 2. Generate Purchases Work Sheet Table (收購報表)
+    const purchaseTable = [
+      [
+        "收購紀錄ID", "日期", "農民/烘乾地", "是否履歷",
+        "物資品種", "物資單價(元/台斤)", "加工使用包數", "扣減使用重量(台斤)", "折算收購成本(元)", "原存放地點"
+      ]
+    ];
+
+    relatedSources.forEach((p) => {
+      const bagsUsed = batch.sourceBagsUsed && batch.sourceBagsUsed[p.id] !== undefined
+        ? batch.sourceBagsUsed[p.id]
+        : p.totalBags;
+      const weightUsed = p.totalBags > 0 ? (p.totalWeightCatty * (bagsUsed / p.totalBags)) : 0;
+      const pCost = p.price * weightUsed;
+
+      purchaseTable.push([
+        p.id,
+        p.date,
+        p.farmerName,
+        p.isResume ? "是" : "否",
+        p.variety,
+        p.price,
+        bagsUsed,
+        parseFloat(weightUsed.toFixed(1)),
+        parseFloat(pCost.toFixed(0)),
+        p.storageLocation
+      ]);
+    });
+
+    // Add empty separator row
+    purchaseTable.push([]);
+
+    // Add purchase cost statistics summary row (收購成本統計)
+    const totalBags = relatedSources.reduce((sum, p) => {
+      const bagsUsed = batch.sourceBagsUsed && batch.sourceBagsUsed[p.id] !== undefined
+        ? batch.sourceBagsUsed[p.id]
+        : p.totalBags;
+      return sum + bagsUsed;
+    }, 0);
+
+    purchaseTable.push([
+      "加總統計(收購成本統計)",
+      "",
+      `總共: ${relatedSources.length} 戶農民`,
+      "",
+      "",
+      `加權平均單價: $${avgPrice.toFixed(2)} 元/台斤`,
+      `${totalBags} 包`,
+      `進料總重: ${parseFloat(rawCattySum.toFixed(1)).toLocaleString()} 台斤`,
+      `總折算收購成本: $${parseFloat(totalCost.toFixed(0)).toLocaleString()} 元`,
+      ""
+    ]);
+
+    try {
+      // Create a brand new workbook
+      const wb = XLSX.utils.book_new();
+
+      // Convert arrays to worksheets
+      const wsShelling = XLSX.utils.aoa_to_sheet(shellingTable);
+      const wsPurchases = XLSX.utils.aoa_to_sheet(purchaseTable);
+
+      // Append worksheets to workbook with precise sheet names
+      XLSX.utils.book_append_sheet(wb, wsShelling, "脫殼作業報表");
+      XLSX.utils.book_append_sheet(wb, wsPurchases, "收購報表");
+
+      // Save workbook to file
+      XLSX.writeFile(wb, `加工批次與收購報告明細_批號${batch.id.substring(0, 6)}.xlsx`);
+    } catch (err) {
+      console.error("Failed to export with multiple worksheets:", err);
+      alert("匯出 Excel 發生錯誤，請聯絡管理員。");
+    }
+  };
+
+  const handleExportByDateRange = () => {
+    // Filter batches by date range (inclusive)
+    const filteredBatches = shellingBatches.filter(b => b.date >= exportStartDate && b.date <= exportEndDate)
+      .sort((a, b) => b.date.localeCompare(a.date)); // Sort by date descending
+
+    if (filteredBatches.length === 0) {
+      alert("選取區間內無任何脫殼加工批次紀錄！");
+      return;
+    }
+
+    // 1. Generate "代工脫殼批次總表" Work Sheet
     const shellingHeaders = [
-      "報表類型", "加工批號(Batch ID)", "代工脫殼日期", "加工品項說明", 
+      "代工脫殼日期", "加工批號(Batch ID)", "加工品項說明", 
       "進料總重(台斤)", "進料公制重(公斤)", "脫殼出產重量(公斤)", 
       "出肉率(成品率%)", "測量水分(%)", "合計毛料收購成本(元)", 
       "成品每公斤原料收購成本(元/公斤)", "成品存放倉儲"
     ];
-    const shellingRow = [
-      "脫殼作業報表", batch.id, batch.date, "多來源混合/合夥代工加工", 
-      rawCattySum.toFixed(1), rawKgSum.toFixed(1), batch.outputWeightKg.toFixed(1), 
-      `${batch.recoveryRate}%`, `${batch.moisture}%`, totalCost.toFixed(0), 
-      rawMaterialCostPerFinishedKg.toFixed(2), "脫殼完成出口倉"
-    ];
-    const shellingCSVContent = "\uFEFF" + [shellingHeaders.join(","), shellingRow.join(",")].join("\n");
 
-    // 2. Generate Purchases Work Sheet (收購報表)
-    const purchaseHeaders = [
-      "報表類型", "收購紀錄ID", "日期", "農民/烘乾地", 
-      "物資品種", "收購單價(元/台斤)", "進料重量(台斤)", "合計收購成本(元)", "存放庫房地點"
-    ];
-    const purchaseRows = relatedSources.map((p, idx) => {
-      const pCost = p.price * p.totalWeightCatty;
-      return [
-        `收購報表_來源#${idx+1}`, p.id, p.date, p.farmerName, 
-        p.variety, p.price.toString(), p.totalWeightCatty.toString(), pCost.toFixed(0), 
-        p.storageLocation
-      ].join(",");
+    const shellingRows: any[] = [];
+    let totalRawCattyAll = 0;
+    let totalRawKgAll = 0;
+    let totalOutputKgAll = 0;
+    let totalCostAll = 0;
+
+    filteredBatches.forEach(b => {
+      const relatedSources = purchases.filter(p => b.sourceBatchIds.includes(p.id));
+      const rawCattySum = relatedSources.reduce((sum, p) => {
+        const bagsUsed = b.sourceBagsUsed && b.sourceBagsUsed[p.id] !== undefined
+          ? b.sourceBagsUsed[p.id]
+          : p.totalBags;
+        const weightUsed = p.totalBags > 0 ? (p.totalWeightCatty * (bagsUsed / p.totalBags)) : 0;
+        return sum + weightUsed;
+      }, 0);
+      const rawKgSum = rawCattySum * 0.6;
+
+      const totalCost = relatedSources.reduce((sum, p) => {
+        const bagsUsed = b.sourceBagsUsed && b.sourceBagsUsed[p.id] !== undefined
+          ? b.sourceBagsUsed[p.id]
+          : p.totalBags;
+        const weightUsed = p.totalBags > 0 ? (p.totalWeightCatty * (bagsUsed / p.totalBags)) : 0;
+        return sum + (p.price * weightUsed);
+      }, 0);
+
+      const rawMaterialCostPerFinishedKg = b.outputWeightKg > 0 ? totalCost / b.outputWeightKg : 0;
+
+      totalRawCattyAll += rawCattySum;
+      totalRawKgAll += rawKgSum;
+      totalOutputKgAll += b.outputWeightKg;
+      totalCostAll += totalCost;
+
+      shellingRows.push([
+        b.date,
+        b.id,
+        "多來源混合/合夥代工加工",
+        parseFloat(rawCattySum.toFixed(1)),
+        parseFloat(rawKgSum.toFixed(1)),
+        b.outputWeightKg,
+        `${b.recoveryRate}%`,
+        `${b.moisture}%`,
+        parseFloat(totalCost.toFixed(0)),
+        parseFloat(rawMaterialCostPerFinishedKg.toFixed(2)),
+        "脫殼完成出口倉"
+      ]);
     });
-    const purchaseCSVContent = "\uFEFF" + [purchaseHeaders.join(","), ...purchaseRows].join("\n");
 
-    // Helper to download a single file blob
-    const downloadBlob = (content: string, filename: string) => {
-      const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.setAttribute("href", url);
-      link.setAttribute("download", filename);
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      URL.revokeObjectURL(url);
-    };
+    // Add summary row for shelling table
+    const avgRecoveryRateTotal = totalRawKgAll > 0 ? (totalOutputKgAll / totalRawKgAll) * 100 : 0;
+    const shellingTable = [
+      shellingHeaders,
+      ...shellingRows,
+      [], // Empty row separator
+      [
+        "加總統計(區間累計)",
+        `區間共: ${filteredBatches.length} 批次`,
+        "",
+        parseFloat(totalRawCattyAll.toFixed(1)),
+        parseFloat(totalRawKgAll.toFixed(1)),
+        parseFloat(totalOutputKgAll.toFixed(1)),
+        `${avgRecoveryRateTotal.toFixed(2)}%`,
+        "", // moisture average empty
+        parseFloat(totalCostAll.toFixed(0)),
+        totalOutputKgAll > 0 ? parseFloat((totalCostAll / totalOutputKgAll).toFixed(2)) : 0,
+        ""
+      ]
+    ];
 
-    // Download both files sequentially
-    downloadBlob(shellingCSVContent, `1_脫殼作業報表_${batch.date}_${batch.id.substring(0, 6)}.csv`);
-    
-    // Brief timeout to avoid browser popup/multi-download block issues
-    setTimeout(() => {
-      downloadBlob(purchaseCSVContent, `2_收購報表_對應脫殼批號_${batch.id.substring(0, 6)}.csv`);
-    }, 250);
+    // 2. Generate "對應收購來源明細" Work Sheet
+    const purchaseHeaders = [
+      "加工批號", "加工日期", "收購紀錄ID", "收購日期", "農民/烘乾地", "是否履歷",
+      "物資品種", "物資單價(元/台斤)", "加工使用包數", "扣減使用重量(台斤)", "折算收購成本(元)", "原存放地點"
+    ];
+
+    const purchaseRows: any[] = [];
+    let totalBagsAll = 0;
+    let totalWeightCattyAll = 0;
+    let totalPurchaseCostAll = 0;
+
+    filteredBatches.forEach(b => {
+      const relatedSources = purchases.filter(p => b.sourceBatchIds.includes(p.id));
+      relatedSources.forEach(p => {
+        const bagsUsed = b.sourceBagsUsed && b.sourceBagsUsed[p.id] !== undefined
+          ? b.sourceBagsUsed[p.id]
+          : p.totalBags;
+        const weightUsed = p.totalBags > 0 ? (p.totalWeightCatty * (bagsUsed / p.totalBags)) : 0;
+        const pCost = p.price * weightUsed;
+
+        totalBagsAll += bagsUsed;
+        totalWeightCattyAll += weightUsed;
+        totalPurchaseCostAll += pCost;
+
+        purchaseRows.push([
+          b.id,
+          b.date,
+          p.id,
+          p.date,
+          p.farmerName,
+          p.isResume ? "是" : "否",
+          p.variety,
+          p.price,
+          bagsUsed,
+          parseFloat(weightUsed.toFixed(1)),
+          parseFloat(pCost.toFixed(0)),
+          p.storageLocation
+        ]);
+      });
+    });
+
+    const purchaseTable = [
+      purchaseHeaders,
+      ...purchaseRows,
+      [], // Empty separation row
+      [
+        "加總統計(區間累計)",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        totalBagsAll,
+        parseFloat(totalWeightCattyAll.toFixed(1)),
+        parseFloat(totalPurchaseCostAll.toFixed(0)),
+        ""
+      ]
+    ];
+
+    try {
+      // Create workbook
+      const wb = XLSX.utils.book_new();
+
+      // Convert arrays to worksheets
+      const wsShelling = XLSX.utils.aoa_to_sheet(shellingTable);
+      const wsPurchases = XLSX.utils.aoa_to_sheet(purchaseTable);
+
+      // Append
+      XLSX.utils.book_append_sheet(wb, wsShelling, "代工脫殼批次總表");
+      XLSX.utils.book_append_sheet(wb, wsPurchases, "對應收購來源明細");
+
+      // Save
+      XLSX.writeFile(wb, `花生脫殼代工區間報表_${exportStartDate}_至_${exportEndDate}.xlsx`);
+    } catch (err) {
+      console.error("Failed to export by date range:", err);
+      alert("匯出區間報表發生錯誤，請聯絡管理員。");
+    }
   };
 
   const getMoistureBadge = (m: number) => {
@@ -441,11 +779,11 @@ export const AdminPanel: React.FC = () => {
     <div className="space-y-6">
       
       {/* Visual Admin Tabs header */}
-      <div className="flex border-b border-slate-200">
+      <div className="flex border-b border-slate-200 overflow-x-auto flex-nowrap scrollbar-none">
         <button
           id="tab-inventory-btn"
           onClick={() => setActiveTab('inventory')}
-          className={`flex items-center space-x-2 py-3 px-4 border-b-2 font-semibold text-sm transition-all focus:outline-none ${
+          className={`flex items-center space-x-2 py-3 px-4 border-b-2 font-semibold text-sm transition-all focus:outline-none whitespace-nowrap cursor-pointer ${
             activeTab === 'inventory'
               ? 'border-amber-600 text-amber-600'
               : 'border-transparent text-slate-500 hover:text-slate-800'
@@ -457,7 +795,7 @@ export const AdminPanel: React.FC = () => {
         <button
           id="tab-shelling-btn"
           onClick={() => setActiveTab('shelling')}
-          className={`flex items-center space-x-2 py-3 px-4 border-b-2 font-semibold text-sm transition-all focus:outline-none ${
+          className={`flex items-center space-x-2 py-3 px-4 border-b-2 font-semibold text-sm transition-all focus:outline-none whitespace-nowrap cursor-pointer ${
             activeTab === 'shelling'
               ? 'border-amber-600 text-amber-600'
               : 'border-transparent text-slate-500 hover:text-slate-800'
@@ -469,7 +807,7 @@ export const AdminPanel: React.FC = () => {
         <button
           id="tab-reports-btn"
           onClick={() => setActiveTab('reports')}
-          className={`flex items-center space-x-2 py-3 px-4 border-b-2 font-semibold text-sm transition-all focus:outline-none ${
+          className={`flex items-center space-x-2 py-3 px-4 border-b-2 font-semibold text-sm transition-all focus:outline-none whitespace-nowrap cursor-pointer ${
             activeTab === 'reports'
               ? 'border-amber-600 text-amber-600'
               : 'border-transparent text-slate-500 hover:text-slate-800'
@@ -477,6 +815,18 @@ export const AdminPanel: React.FC = () => {
         >
           <FileSpreadsheet className="h-4 w-4" />
           <span>加工批次報告</span>
+        </button>
+        <button
+          id="tab-options-btn"
+          onClick={() => setActiveTab('options')}
+          className={`flex items-center space-x-2 py-3 px-4 border-b-2 font-semibold text-sm transition-all focus:outline-none whitespace-nowrap cursor-pointer ${
+            activeTab === 'options'
+              ? 'border-amber-600 text-amber-600'
+              : 'border-transparent text-slate-500 hover:text-slate-800'
+          }`}
+        >
+          <Grid className="h-4 w-4" />
+          <span>選單內容編輯</span>
         </button>
       </div>
 
@@ -568,69 +918,105 @@ export const AdminPanel: React.FC = () => {
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
             
             {/* Step A: Multi-select source records from Inventory (Left Column) */}
-            <div className="lg:col-span-7 bg-white rounded-2xl border border-slate-200 shadow-sm p-5 space-y-4">
+            <div className="lg:col-span-7 bg-white rounded-2xl border border-slate-200 shadow-sm p-4 md:p-5 space-y-4">
               <div className="flex justify-between items-center pb-3 border-b border-slate-100">
                 <div>
                   <h3 className="text-sm font-bold text-slate-800">1. 選取本次加工使用的花生貨源</h3>
-                  <p className="text-xs text-slate-400 mt-0.5">可勾選多批不同農民、不同存放區的花生毛料混合脫殼。</p>
+                  <p className="text-xs text-slate-400 mt-0.5">可勾選多批不同農民、不同存放區的花生毛料混合脫殼。已用罄的貨源不會在清單中顯示。</p>
                 </div>
-                {purchases.length > 0 && (
+                {purchases.filter(p => getRemainingBags(p) > 0).length > 0 && (
                   <button
                     onClick={handleSelectAllPurchases}
-                    className="text-xs font-semibold text-amber-700 hover:text-amber-800"
+                    className="text-xs font-semibold text-amber-700 hover:text-amber-800 cursor-pointer"
                   >
-                    {selectedSourceIds.length === purchases.length ? '取消全選' : '全選全部'}
+                    {selectedSourceIds.length === purchases.filter(p => getRemainingBags(p) > 0).length ? '取消全選' : '全選可使用貨源'}
                   </button>
                 )}
               </div>
 
               <div className="space-y-2 max-h-[480px] overflow-y-auto pr-2">
-                {purchases.length === 0 ? (
+                {purchases.filter(p => getRemainingBags(p) > 0).length === 0 ? (
                   <div className="text-center py-12 text-slate-400 text-xs">
-                    請先至前台登錄收購數據，方可進行脫殼混料。
+                    目前原料庫存皆已全數代工脫殼完畢，或尚無收購紀錄。請先至收購前台登錄。
                   </div>
                 ) : (
-                  purchases.map((p) => {
-                    const isChecked = selectedSourceIds.includes(p.id);
-                    return (
-                      <div
-                        key={p.id}
-                        onClick={() => handleToggleSource(p.id)}
-                        className={`p-3 rounded-xl border transition flex items-center justify-between cursor-pointer ${
-                          isChecked 
-                            ? 'border-amber-400 bg-amber-50/30' 
-                            : 'border-slate-150 bg-white hover:bg-slate-50'
-                        }`}
-                      >
-                        <div className="flex items-center space-x-3">
-                          {/* Custom Checkbox */}
-                          <div className={`h-4.5 w-4.5 rounded border flex items-center justify-center transition-colors ${
-                            isChecked ? 'bg-amber-600 border-amber-600 text-white' : 'border-slate-300 bg-white'
-                          }`}>
-                            {isChecked && <Check className="h-3 w-3 stroke-[3]" />}
-                          </div>
+                  purchases
+                    .filter(p => getRemainingBags(p) > 0)
+                    .map((p) => {
+                      const isChecked = selectedSourceIds.includes(p.id);
+                      const remaining = getRemainingBags(p);
+                      const remainingWeight = p.totalBags > 0 ? (p.totalWeightCatty * (remaining / p.totalBags)) : 0;
 
-                          <div>
-                            <div className="flex items-center space-x-1.5">
-                              <span className="text-sm font-bold text-slate-800">{p.farmerName}</span>
-                              <span className="text-[10px] bg-slate-100 border border-slate-200 px-1 text-slate-600 rounded">
-                                {p.variety}
+                      return (
+                        <div
+                          key={p.id}
+                          onClick={() => handleToggleSource(p.id)}
+                          className={`p-3 rounded-xl border transition flex flex-col md:flex-row md:items-center justify-between gap-3 cursor-pointer ${
+                            isChecked 
+                              ? 'border-amber-400 bg-amber-50/20' 
+                              : 'border-slate-150 bg-white hover:bg-slate-50 shadow-sm'
+                          }`}
+                        >
+                          <div className="flex items-center space-x-3">
+                            {/* Custom Checkbox */}
+                            <div className={`h-4.5 w-4.5 rounded border flex items-center justify-center transition-colors shrink-0 ${
+                              isChecked ? 'bg-amber-600 border-amber-600 text-white' : 'border-slate-300 bg-white'
+                            }`}>
+                              {isChecked && <Check className="h-3 w-3 stroke-[3]" />}
+                            </div>
+
+                            <div>
+                              <div className="flex items-center space-x-1.5 flex-wrap">
+                                <span className="text-sm font-bold text-slate-800">{p.farmerName}</span>
+                                {p.isResume && (
+                                  <span className="text-[10px] bg-emerald-50 border border-emerald-200 px-1 text-emerald-700 rounded font-semibold whitespace-nowrap">
+                                    履歷
+                                  </span>
+                                )}
+                                <span className="text-[10px] bg-slate-100 border border-slate-200 px-1 text-slate-600 rounded whitespace-nowrap">
+                                  {p.variety}
+                                </span>
+                              </div>
+                              <span className="text-[10px] font-mono text-slate-400 block mt-0.5">
+                                存放：{p.storageLocation} | 收購日：{p.date}
+                              </span>
+                              <span className="text-[10px] font-semibold text-rose-600 bg-rose-50 border border-rose-100 rounded px-1.5 py-0.5 inline-block mt-1">
+                                可用餘額：{remaining} 包 / 約 {remainingWeight.toFixed(0)} 台斤
                               </span>
                             </div>
-                            <span className="text-[10px] font-mono text-slate-400 block mt-0.5">
-                              存放於: {p.storageLocation} | 收購日: {p.date}
-                            </span>
+                          </div>
+
+                          {/* Weight in taiwan catty label */}
+                          <div className="flex items-center space-x-3 shrink-0 self-end md:self-auto" onClick={(e) => e.stopPropagation()}>
+                            {isChecked ? (
+                              <div className="flex items-center space-x-1.5 bg-white border border-amber-300 rounded-xl px-2 py-1 shrink-0 shadow-sm">
+                                <span className="text-xs font-semibold text-slate-600">使用包數:</span>
+                                <input
+                                  type="number"
+                                  min="1"
+                                  max={remaining}
+                                  value={selectedBags[p.id] || ''}
+                                  onChange={(e) => {
+                                    const val = e.target.value === '' ? '' : Math.min(remaining, Math.max(1, parseInt(e.target.value) || 1));
+                                    setSelectedBags(prev => ({
+                                      ...prev,
+                                      [p.id]: val as number
+                                    }));
+                                  }}
+                                  className="w-14 text-center rounded-lg border border-slate-200 py-1 px-1.5 text-xs outline-none focus:border-amber-500 font-bold font-mono text-slate-800"
+                                />
+                                <span className="text-xs font-semibold text-slate-400">包</span>
+                              </div>
+                            ) : (
+                              <div className="text-right">
+                                <span className="text-sm font-semibold text-slate-700 block font-mono">{remaining} 包</span>
+                                <span className="text-[10px] text-slate-400 font-mono">約 {remainingWeight.toFixed(0)} 台斤</span>
+                              </div>
+                            )}
                           </div>
                         </div>
-
-                        {/* Weight in taiwan catty label */}
-                        <div className="text-right">
-                          <span className="text-sm font-semibold text-slate-700 block font-mono">{p.totalWeightCatty.toLocaleString()} 台斤</span>
-                          <span className="text-[10px] text-slate-400 font-mono">約 {p.totalBags} 包</span>
-                        </div>
-                      </div>
-                    );
-                  })
+                      );
+                    })
                 )}
               </div>
             </div>
@@ -772,7 +1158,45 @@ export const AdminPanel: React.FC = () => {
           <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
             <div className="p-5 border-b border-slate-100 bg-slate-50/50">
               <h3 className="text-base font-bold text-slate-800">花生加工脫殼生產批次報告</h3>
-              <p className="text-xs text-slate-500">歷史紀錄彙整，您在此處可以審閱成品轉化轉換明細，並打包匯出 CSV 試算表。</p>
+              <p className="text-xs text-slate-500">歷史紀錄彙整，您在此處可以審閱成品轉化轉換明細，並依選定之時間區間打包下載統計報表。</p>
+            </div>
+
+            {/* Date-Range Bulk Export Section */}
+            <div className="p-5 bg-amber-50/10 border-b border-slate-150 grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
+              <div>
+                <label className="block text-xs font-bold text-slate-600 mb-1.5 flex items-center">
+                  <Calendar className="h-3.5 w-3.5 text-amber-600 mr-1" />
+                  匯出開始日期
+                </label>
+                <input
+                  type="date"
+                  value={exportStartDate}
+                  onChange={(e) => setExportStartDate(e.target.value)}
+                  className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-amber-500 font-medium text-slate-700"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-slate-600 mb-1.5 flex items-center">
+                  <Calendar className="h-3.5 w-3.5 text-amber-600 mr-1" />
+                  匯出結束日期
+                </label>
+                <input
+                  type="date"
+                  value={exportEndDate}
+                  onChange={(e) => setExportEndDate(e.target.value)}
+                  className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-amber-500 font-medium text-slate-700"
+                />
+              </div>
+              <div>
+                <button
+                  type="button"
+                  onClick={handleExportByDateRange}
+                  className="w-full flex items-center justify-center space-x-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs py-2.5 transition active:scale-[0.98] cursor-pointer shadow-sm"
+                >
+                  <FileSpreadsheet className="h-4 w-4 shrink-0" />
+                  <span>批次與收購資料區間匯出 (.xlsx)</span>
+                </button>
+              </div>
             </div>
 
             <div className="overflow-x-auto">
@@ -785,7 +1209,7 @@ export const AdminPanel: React.FC = () => {
                     <th className="py-3 px-4 text-right">脫殼出產重量</th>
                     <th className="py-3 px-4 text-center">出肉率 (成品率)</th>
                     <th className="py-3 px-4 text-center">水分含量 (%)</th>
-                    <th className="py-3 px-4 text-center">明細匯出與管理</th>
+                    <th className="py-3 px-4 text-center">管理</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 text-sm text-slate-700">
@@ -799,7 +1223,13 @@ export const AdminPanel: React.FC = () => {
                     shellingBatches.map((b) => {
                       // Match referenced sources from local state
                       const relatedSources = purchases.filter(p => b.sourceBatchIds.includes(p.id));
-                      const combinedCatty = relatedSources.reduce((sum, p) => sum + p.totalWeightCatty, 0);
+                      const combinedCatty = relatedSources.reduce((sum, p) => {
+                        const bagsUsed = b.sourceBagsUsed && b.sourceBagsUsed[p.id] !== undefined
+                          ? b.sourceBagsUsed[p.id]
+                          : p.totalBags;
+                        const weightUsed = p.totalBags > 0 ? (p.totalWeightCatty * (bagsUsed / p.totalBags)) : 0;
+                        return sum + weightUsed;
+                      }, 0);
                       const combinedKg = combinedCatty * 0.6;
 
                       return (
@@ -813,17 +1243,22 @@ export const AdminPanel: React.FC = () => {
                               {relatedSources.length === 0 ? (
                                 <span className="text-xs text-rose-500 font-medium">使用來源已遭到刪除</span>
                               ) : (
-                                relatedSources.map((p) => (
-                                  <span key={p.id} className="inline-flex items-center rounded-md bg-amber-50 px-1.5 py-0.5 text-xs text-amber-700 font-medium border border-amber-100">
-                                    {p.farmerName} ({p.variety})
-                                  </span>
-                                ))
+                                relatedSources.map((p) => {
+                                  const bagsUsed = b.sourceBagsUsed && b.sourceBagsUsed[p.id] !== undefined
+                                    ? b.sourceBagsUsed[p.id]
+                                    : p.totalBags;
+                                  return (
+                                    <span key={p.id} className="inline-flex items-center rounded-md bg-amber-50 px-1.5 py-0.5 text-xs text-amber-700 font-medium border border-amber-100 whitespace-nowrap">
+                                      {p.farmerName} ({p.variety}) [{bagsUsed}包]
+                                    </span>
+                                  );
+                                })
                               )}
                             </div>
                           </td>
                           <td className="py-4 px-4 text-right font-mono text-xs">
-                            <span className="font-semibold text-slate-600">{combinedCatty.toLocaleString()} 斤</span>
-                            <span className="text-[10px] text-slate-400 block">({combinedKg.toLocaleString()} 公斤)</span>
+                            <span className="font-semibold text-slate-600">{parseFloat(combinedCatty.toFixed(1)).toLocaleString()} 斤</span>
+                            <span className="text-[10px] text-slate-400 block">({parseFloat(combinedKg.toFixed(1)).toLocaleString()} 公斤)</span>
                           </td>
                           <td className="py-4 px-4 text-right font-bold text-slate-800 font-mono">
                             {b.outputWeightKg.toLocaleString()} 公斤
@@ -835,23 +1270,14 @@ export const AdminPanel: React.FC = () => {
                             {getMoistureBadge(b.moisture)}
                           </td>
                           <td className="py-4 px-4 text-center">
-                            <div className="flex items-center justify-center space-x-2">
-                              <button
-                                onClick={() => handleExportCSV(b)}
-                                className="p-1.5 rounded-lg border border-slate-200 text-xs font-semibold text-slate-600 hover:bg-slate-100 transition flex items-center space-x-1"
-                                title="打包成 CSV 表格下載"
-                              >
-                                <Download className="h-3 w-3 text-slate-500" />
-                                <span>CSV 匯出</span>
-                              </button>
-                              <button
-                                onClick={() => handleDeleteShellingClick(b.id)}
-                                className="p-1.5 rounded-lg hover:bg-rose-50 border border-slate-100 text-rose-600 hover:border-rose-100"
-                                title="刪除本報告"
-                              >
-                                <Trash2 className="h-3 w-3" />
-                              </button>
-                            </div>
+                            <button
+                              onClick={() => handleDeleteShellingClick(b.id)}
+                              className="p-1.5 rounded-lg bg-white border border-slate-200 hover:bg-rose-50 text-slate-500 hover:text-rose-600 hover:border-rose-100 transition inline-flex items-center space-x-1 cursor-pointer text-xs font-medium"
+                              title="刪除此加工紀錄報告"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                              <span>刪除</span>
+                            </button>
                           </td>
                         </tr>
                       );
@@ -860,6 +1286,173 @@ export const AdminPanel: React.FC = () => {
                 </tbody>
               </table>
             </div>
+          </div>
+        )}
+
+        {/* =============== Tab 4: SELECTION OPTIONS EDIT =============== */}
+        {activeTab === 'options' && (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            
+            {/* Peanut Varieties Configuration Card */}
+            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 space-y-4">
+              <div>
+                <h3 className="text-base font-bold text-slate-800 flex items-center">
+                  <Grid className="h-5 w-5 text-amber-600 mr-2" />
+                  前台收購花生品種選單管理
+                </h3>
+                <p className="text-xs text-slate-500 mt-1">
+                  在此新增、刪除或調整可供前台及後台選擇的花生品種清單。
+                </p>
+              </div>
+
+              {/* Add form */}
+              <form onSubmit={async (e) => {
+                e.preventDefault();
+                if (!newVariety.trim()) return;
+                if (varieties.includes(newVariety.trim())) {
+                  showCustomAlert("提示", "此花生品種已存在！");
+                  return;
+                }
+                const updated = [...varieties, newVariety.trim()];
+                try {
+                  await updateOptions(updated, storageLocations);
+                  setNewVariety('');
+                  showCustomAlert("成功", "花生品種新增成功！", "success");
+                } catch (err) {
+                  console.error(err);
+                  showCustomAlert("錯誤", "儲存失敗，請確認網路連線。");
+                }
+              }} className="flex gap-2">
+                <input
+                  type="text"
+                  required
+                  placeholder="輸入新品種名稱 (例如: 黑金剛, 九號)"
+                  value={newVariety}
+                  onChange={(e) => setNewVariety(e.target.value)}
+                  className="flex-1 rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-amber-500 font-medium"
+                />
+                <button
+                  type="submit"
+                  className="rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-semibold text-xs px-4 py-2 transition active:scale-[0.98] cursor-pointer"
+                >
+                  新增品種
+                </button>
+              </form>
+
+              {/* List of current options */}
+              <div className="border border-slate-100 rounded-xl divide-y divide-slate-100 max-h-64 overflow-y-auto">
+                {varieties.map((v) => (
+                  <div key={v} className="flex justify-between items-center py-2.5 px-4 text-sm font-medium text-slate-700 hover:bg-slate-50/50">
+                    <span>{v}</span>
+                    {v !== '其他' && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          showCustomConfirm(
+                            "確認移除品種",
+                            `確定要刪除「${v}」品種嗎？已登錄的歷史紀錄將不受影響。`,
+                            async () => {
+                              const updated = varieties.filter(x => x !== v);
+                              try {
+                                await updateOptions(updated, storageLocations);
+                                showCustomAlert("成功", "品種已由選單移除。", "success");
+                              } catch (err) {
+                                console.error(err);
+                                showCustomAlert("錯誤", "更新失敗，請確認網路。");
+                              }
+                            }
+                          );
+                        }}
+                        className="text-slate-400 hover:text-rose-600 p-1 rounded-lg hover:bg-rose-50 transition cursor-pointer"
+                        title="刪除此選項"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Storage Locations Configuration Card */}
+            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 space-y-4">
+              <div>
+                <h3 className="text-base font-bold text-slate-800 flex items-center">
+                  <Archive className="h-5 w-5 text-amber-600 mr-2" />
+                  存放地點選單管理
+                </h3>
+                <p className="text-xs text-slate-500 mt-1">
+                  在這裡設定庫存儲物空間清單，存放地點將以選項下拉選單供前台輸入。
+                </p>
+              </div>
+
+              {/* Add form */}
+              <form onSubmit={async (e) => {
+                e.preventDefault();
+                if (!newStorageLocation.trim()) return;
+                if (storageLocations.includes(newStorageLocation.trim())) {
+                  showCustomAlert("提示", "此存放地點已存在！");
+                  return;
+                }
+                const updated = [...storageLocations, newStorageLocation.trim()];
+                try {
+                  await updateOptions(varieties, updated);
+                  setNewStorageLocation('');
+                  showCustomAlert("成功", "存放地點新增成功！", "success");
+                } catch (err) {
+                  console.error(err);
+                  showCustomAlert("錯誤", "儲存失敗，請確認網路連線。");
+                }
+              }} className="flex gap-2">
+                <input
+                  type="text"
+                  required
+                  placeholder="輸入存放地點名稱 (例如: A2 庫房, 西側烘乾場)"
+                  value={newStorageLocation}
+                  onChange={(e) => setNewStorageLocation(e.target.value)}
+                  className="flex-1 rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-amber-500 font-medium"
+                />
+                <button
+                  type="submit"
+                  className="rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-semibold text-xs px-4 py-2 transition active:scale-[0.98] cursor-pointer"
+                >
+                  新增地點
+                </button>
+              </form>
+
+              {/* List of current options */}
+              <div className="border border-slate-100 rounded-xl divide-y divide-slate-100 max-h-64 overflow-y-auto">
+                {storageLocations.map((loc) => (
+                  <div key={loc} className="flex justify-between items-center py-2.5 px-4 text-sm font-medium text-slate-700 hover:bg-slate-50/50">
+                    <span>{loc}</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        showCustomConfirm(
+                          "確認移除存放地點",
+                          `確定要刪除「${loc}」存放地點嗎？歷史收購資料不會被更改。`,
+                          async () => {
+                            const updated = storageLocations.filter(x => x !== loc);
+                            try {
+                              await updateOptions(varieties, updated);
+                              showCustomAlert("成功", "存放地點已由選單移除。", "success");
+                            } catch (err) {
+                              console.error(err);
+                              showCustomAlert("錯誤", "更新失敗，請確認網路。");
+                            }
+                          }
+                        );
+                      }}
+                      className="text-slate-400 hover:text-rose-600 p-1 rounded-lg hover:bg-rose-50 transition cursor-pointer"
+                      title="刪除此選項"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+
           </div>
         )}
       </div>
@@ -899,17 +1492,37 @@ export const AdminPanel: React.FC = () => {
                       onChange={(e) => setEditFarmerName(e.target.value)}
                       className="w-full rounded-xl border border-slate-200 py-2 px-3 text-sm outline-none focus:border-amber-500"
                     />
+                    <div className="mt-2.5 flex items-center">
+                      <input
+                        id="edit-is-resume"
+                        type="checkbox"
+                        checked={editIsResume}
+                        onChange={(e) => setEditIsResume(e.target.checked)}
+                        className="h-4 w-4 rounded border-slate-300 text-amber-600 focus:ring-amber-500 cursor-pointer"
+                      />
+                      <label htmlFor="edit-is-resume" className="ml-2 text-xs font-semibold text-slate-600 select-none cursor-pointer">
+                        具備「履歷」認證
+                      </label>
+                    </div>
                   </div>
                   <div>
                     <label className="block text-xs font-semibold text-slate-600 mb-1.5">花生品種</label>
-                    <input
-                      id="edit-variety-input"
-                      type="text"
-                      required
+                    <select
+                      id="edit-variety-select"
                       value={editVariety}
                       onChange={(e) => setEditVariety(e.target.value)}
-                      className="w-full rounded-xl border border-slate-200 py-2 px-3 text-sm outline-none focus:border-amber-500"
-                    />
+                      className="w-full rounded-xl border border-slate-200 bg-white py-2 px-3 text-sm outline-none focus:border-amber-500 cursor-pointer"
+                    >
+                      {varieties.map((v) => (
+                        <option key={v} value={v}>{v}</option>
+                      ))}
+                      {!varieties.includes(editVariety) && editVariety && (
+                        <option value={editVariety}>{editVariety}</option>
+                      )}
+                      {!varieties.includes('其他') && (
+                        <option value="其他">其他</option>
+                      )}
+                    </select>
                   </div>
                 </div>
 
@@ -977,14 +1590,19 @@ export const AdminPanel: React.FC = () => {
 
                 <div>
                   <label className="block text-xs font-semibold text-slate-600 mb-1.5">存放地點</label>
-                  <input
-                    id="edit-storage-input"
-                    type="text"
-                    required
+                  <select
+                    id="edit-storage-select"
                     value={editStorageLocation}
                     onChange={(e) => setEditStorageLocation(e.target.value)}
-                    className="w-full rounded-xl border border-slate-200 py-2 px-3 text-sm outline-none focus:border-amber-500"
-                  />
+                    className="w-full rounded-xl border border-slate-200 bg-white py-2 px-3 text-sm outline-none focus:border-amber-500 cursor-pointer"
+                  >
+                    {storageLocations.map((loc) => (
+                      <option key={loc} value={loc}>{loc}</option>
+                    ))}
+                    {!storageLocations.includes(editStorageLocation) && editStorageLocation && (
+                      <option value={editStorageLocation}>{editStorageLocation}</option>
+                    )}
+                  </select>
                 </div>
 
                 <div className="flex space-x-3 pt-4 justify-end border-t border-slate-100">
@@ -1007,6 +1625,73 @@ export const AdminPanel: React.FC = () => {
           </div>
         )}
       </AnimatePresence>
+
+      {/* Custom Confirmation/Notification dialog instead of blocking browser confirm/alert */}
+      {modalConfig.isOpen && (
+        <div className="fixed inset-0 z-[1000] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl border border-slate-100 shadow-2xl max-w-md w-full p-6 space-y-4">
+            <div className="flex items-start space-x-3.5">
+              <div className={`h-10 w-10 rounded-full flex items-center justify-center shrink-0 ${
+                modalConfig.type === 'confirm' 
+                  ? 'bg-amber-100 text-amber-600'
+                  : modalConfig.type === 'success'
+                    ? 'bg-emerald-100 text-emerald-600'
+                    : 'bg-rose-100 text-rose-600'
+              }`}>
+                {modalConfig.type === 'confirm' ? (
+                  <HelpCircle className="h-5 w-5" />
+                ) : modalConfig.type === 'success' ? (
+                  <CheckCircle className="h-5 w-5" />
+                ) : (
+                  <AlertTriangle className="h-5 w-5" />
+                )}
+              </div>
+              <div className="flex-1">
+                <h3 className="text-sm font-bold text-slate-900">{modalConfig.title}</h3>
+                <p className="text-xs text-slate-500 mt-1.5 whitespace-pre-line leading-relaxed">
+                  {modalConfig.message}
+                </p>
+              </div>
+            </div>
+            <div className="flex justify-end space-x-2 pt-3 border-t border-slate-100 text-xs">
+              {modalConfig.type === 'confirm' ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      closeCustomModal();
+                    }}
+                    className="px-4 py-2 border border-slate-200 rounded-xl font-semibold text-slate-600 hover:bg-slate-50 cursor-pointer"
+                  >
+                    取消
+                  </button>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      const confirmCb = modalConfig.onConfirm;
+                      closeCustomModal();
+                      if (confirmCb) {
+                        await confirmCb();
+                      }
+                    }}
+                    className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl font-semibold cursor-pointer"
+                  >
+                    確認
+                  </button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  onClick={closeCustomModal}
+                  className="px-4 py-2 bg-slate-800 hover:bg-slate-900 text-white rounded-xl font-semibold cursor-pointer"
+                >
+                  關閉
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

@@ -25,6 +25,8 @@ interface DatabaseContextType {
   isOnline: boolean;
   isLoading: boolean;
   isSyncing: boolean;
+  varieties: string[];
+  storageLocations: string[];
   // Actions
   addPurchase: (record: Omit<PurchaseRecord, 'id' | 'createdAt' | 'updatedAt'>) => Promise<PurchaseRecord>;
   updatePurchase: (id: string, updates: Partial<PurchaseRecord>) => Promise<void>;
@@ -34,6 +36,7 @@ interface DatabaseContextType {
   setupAdminPassword: (password: string) => Promise<void>;
   verifyAdminPassword: (password: string) => Promise<boolean>;
   triggerManualSync: () => Promise<number>;
+  updateOptions: (varieties: string[], storageLocations: string[]) => Promise<void>;
 }
 
 const DatabaseContext = createContext<DatabaseContextType | undefined>(undefined);
@@ -53,6 +56,32 @@ export const DatabaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const [isOnline, setIsOnline] = useState<boolean>(typeof navigator !== 'undefined' ? navigator.onLine : true);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
+
+  const [varieties, setVarieties] = useState<string[]>(() => {
+    try {
+      const v = localStorage.getItem('peanut_varieties');
+      if (v) {
+        const parsed = JSON.parse(v);
+        if (Array.isArray(parsed)) return parsed;
+      }
+      return ['台南14號', '黑金剛', '台南9號', '紅莞香'];
+    } catch {
+      return ['台南14號', '黑金剛', '台南9號', '紅莞香'];
+    }
+  });
+
+  const [storageLocations, setStorageLocations] = useState<string[]>(() => {
+    try {
+      const l = localStorage.getItem('peanut_storage_locations');
+      if (l) {
+        const parsed = JSON.parse(l);
+        if (Array.isArray(parsed)) return parsed;
+      }
+      return ['冷藏庫1號', '冷藏庫2號', 'A棟倉庫', 'B棟倉庫'];
+    } catch {
+      return ['冷藏庫1號', '冷藏庫2號', 'A棟倉庫', 'B棟倉庫'];
+    }
+  });
 
   // Monitor network status
   useEffect(() => {
@@ -152,10 +181,35 @@ export const DatabaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       }
     );
 
+    // Options Subscriber
+    const optionsDocRef = doc(db, 'settings', 'options');
+    const unsubscribeOptions = onSnapshot(
+      optionsDocRef,
+      (docSnap) => {
+        if (docSnap.exists()) {
+          const data = docSnap.data();
+          if (data) {
+            if (Array.isArray(data.varieties)) {
+              setVarieties(data.varieties);
+              localStorage.setItem('peanut_varieties', JSON.stringify(data.varieties));
+            }
+            if (Array.isArray(data.storageLocations)) {
+              setStorageLocations(data.storageLocations);
+              localStorage.setItem('peanut_storage_locations', JSON.stringify(data.storageLocations));
+            }
+          }
+        }
+      },
+      (error) => {
+        console.error("Firestore Settings options error:", error);
+      }
+    );
+
     return () => {
       unsubscribePurchases();
       unsubscribeShelling();
       unsubscribeAdmin();
+      unsubscribeOptions();
     };
   }, []);
 
@@ -443,6 +497,25 @@ export const DatabaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     }
   };
 
+  // Update Options Action
+  const updateOptions = async (newVarieties: string[], newStorageLocations: string[]): Promise<void> => {
+    setVarieties(newVarieties);
+    setStorageLocations(newStorageLocations);
+    localStorage.setItem('peanut_varieties', JSON.stringify(newVarieties));
+    localStorage.setItem('peanut_storage_locations', JSON.stringify(newStorageLocations));
+
+    if (isOnline) {
+      try {
+        await setDoc(doc(db, 'settings', 'options'), {
+          varieties: newVarieties,
+          storageLocations: newStorageLocations
+        });
+      } catch (err) {
+        console.warn("Offline option saving:", err);
+      }
+    }
+  };
+
   return (
     <DatabaseContext.Provider value={{
       purchases,
@@ -451,6 +524,8 @@ export const DatabaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       isOnline,
       isLoading,
       isSyncing,
+      varieties,
+      storageLocations,
       addPurchase,
       updatePurchase,
       deletePurchase,
@@ -458,7 +533,8 @@ export const DatabaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       deleteShellingBatch,
       setupAdminPassword,
       verifyAdminPassword,
-      triggerManualSync
+      triggerManualSync,
+      updateOptions
     }}>
       {children}
     </DatabaseContext.Provider>

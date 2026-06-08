@@ -1,0 +1,6 @@
+{
+  "name": "花生農民收購紀錄平台",
+  "description": "提供花生農民收購紀錄（前台）與脫殼代工進度管理（後台）的平台，包含條碼（QR code）履歷與離線作業支援。",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

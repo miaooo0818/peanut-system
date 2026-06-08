@@ -27,6 +27,7 @@
         "id": { "type": "string", "description": "The unique ID of the shelling batch" },
         "date": { "type": "string", "description": "The date of the shelling operation (YYYY-MM-DD)" },
         "sourceBatchIds": { "type": "array", "description": "List of purchase record IDs compiled in this session" },
+        "sourceBagsUsed": { "type": "object", "description": "Map of source purchase record IDs to bags used" },
         "outputWeightKg": { "type": "number", "description": "Total shelled peanut output weight in kilograms (公斤)" },
         "recoveryRate": { "type": "number", "description": "Shelling recovery rate percentage (%)" },
         "moisture": { "type": "number", "description": "Measured moisture content percentage (%)" },

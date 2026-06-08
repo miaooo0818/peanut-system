@@ -16,12 +16,14 @@ export interface PurchaseRecord {
   createdAt: string; // ISO String or ISO date-time representation
   updatedAt: string; // ISO String
   isSynced?: boolean; // True if saved to Firebase, false if temporarily in offline storage
+  isResume?: boolean; // 是否為「履歷」
 }
 
 export interface ShellingBatch {
   id: string; // Shelling batch ID
   date: string; // 脫殼日期 (YYYY-MM-DD)
   sourceBatchIds: string[]; // Purchase IDs used as raw materials
+  sourceBagsUsed?: Record<string, number>; // Map of purchase record id -> quantity of bags used in this batch
   outputWeightKg: number; // 總產出重量 (公斤)
   recoveryRate: number; // 成品率 (%)
   moisture: number; // 測量水分 (%)

@@ -1,0 +1,63 @@
+{
+  "entities": {
+    "Purchase": {
+      "title": "Purchase Record",
+      "description": "Records representing a purchase of peanuts from a farmer",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "The unique ID of the purchase batch" },
+        "farmerName": { "type": "string", "description": "The name of the farmer" },
+        "location": { "type": "string", "description": "The location where the purchase took place" },
+        "date": { "type": "string", "description": "The date of the purchase (YYYY-MM-DD)" },
+        "variety": { "type": "string", "description": "The variety of peanut" },
+        "price": { "type": "number", "description": "Price per 台斤" },
+        "totalBags": { "type": "number", "description": "Total number of bags (包)" },
+        "totalWeightCatty": { "type": "number", "description": "Total weight in Taiwan catties (台斤)" },
+        "storageLocation": { "type": "string", "description": "The storage location for this batch" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["farmerName", "location", "date", "variety", "price", "totalBags", "totalWeightCatty", "storageLocation"]
+    },
+    "ShellingBatch": {
+      "title": "Shelling Batch",
+      "description": "Processing records representing a shelling operation that processes multiple purchase batches",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "The unique ID of the shelling batch" },
+        "date": { "type": "string", "description": "The date of the shelling operation (YYYY-MM-DD)" },
+        "sourceBatchIds": { "type": "array", "description": "List of purchase record IDs compiled in this session" },
+        "outputWeightKg": { "type": "number", "description": "Total shelled peanut output weight in kilograms (公斤)" },
+        "recoveryRate": { "type": "number", "description": "Shelling recovery rate percentage (%)" },
+        "moisture": { "type": "number", "description": "Measured moisture content percentage (%)" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["date", "sourceBatchIds", "outputWeightKg", "recoveryRate", "moisture"]
+    },
+    "Setting": {
+      "title": "System Setting",
+      "description": "System-wide settings such as administrator authentication hashes",
+      "type": "object",
+      "properties": {
+        "adminPasswordHash": { "type": "string", "description": "The SHA-256 hashed password of the administrator" },
+        "isConfigured": { "type": "boolean", "description": "Whether the admin password has been set up" }
+      },
+      "required": ["adminPasswordHash", "isConfigured"]
+    }
+  },
+  "firestore": {
+    "/purchases/{purchaseId}": {
+      "schema": "Purchase",
+      "description": "Peanut purchase collection"
+    },
+    "/shelling_batches/{batchId}": {
+      "schema": "ShellingBatch",
+      "description": "Shelling batches processing collection"
+    },
+    "/settings/{settingId}": {
+      "schema": "Setting",
+      "description": "System settings collection (e.g. admin setting)"
+    }
+  }
+}

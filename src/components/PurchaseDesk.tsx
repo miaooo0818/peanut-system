@@ -28,12 +28,13 @@ import { PurchaseRecord } from '../types';
 import { generateQrCode } from '../utils/qrcode';
 
 export const PurchaseDesk: React.FC = () => {
-  const { purchases, addPurchase, isOnline, isLoading } = useDatabase();
+  const { purchases, addPurchase, isOnline, isLoading, varieties, storageLocations } = useDatabase();
 
   const [farmerName, setFarmerName] = useState('');
+  const [isResume, setIsResume] = useState(false);
   const [location, setLocation] = useState('');
   const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
-  const [variety, setVariety] = useState('台南14號');
+  const [variety, setVariety] = useState('');
   const [customVariety, setCustomVariety] = useState('');
   const [price, setPrice] = useState<number | ''>('');
   const [totalBags, setTotalBags] = useState<number | ''>('');
@@ -51,7 +52,19 @@ export const PurchaseDesk: React.FC = () => {
   // Focus tracking for user manual
   const [helpMessage, setHelpMessage] = useState('請依欄位輸入花生農民收購之原始數據。');
 
-  // Load and cache QR Code when selected
+  // Load and cache default selections and handle QR cache
+  useEffect(() => {
+    if (varieties && varieties.length > 0 && !variety) {
+      setVariety(varieties[0]);
+    }
+  }, [varieties, variety]);
+
+  useEffect(() => {
+    if (storageLocations && storageLocations.length > 0 && !storageLocation) {
+      setStorageLocation(storageLocations[0]);
+    }
+  }, [storageLocations, storageLocation]);
+
   useEffect(() => {
     if (activeQrRecord) {
       const qrPayload = JSON.stringify({
@@ -71,13 +84,13 @@ export const PurchaseDesk: React.FC = () => {
   // Set help hints dynamically
   const getHelpTip = (field: string) => {
     switch (field) {
-      case 'farmer': return '請輸入農民真實姓名以利建檔與請款管理。';
+      case 'farmer': return '請輸入農民真實姓名與是否符合履歷認證規格。';
       case 'location': return '例如「褒忠鄉」、「元長鄉農會前」，以利掌握貨源分布。';
       case 'variety': return '品種會影響出油率，脫殼加工時亦需區隔，請確實選填。';
       case 'price': return '目前行情約每台斤 $30 - $48 元不等，請填寫實收單價。';
       case 'bags': return '該批採收裝填之總袋數（包）。';
       case 'weight': return '直接抄寫磅秤顯示之原始「台斤（Catty）」總重。';
-      case 'storage': return '例如「A棟倉庫」、「1號冷藏庫」，以利脫殼時快速尋料。';
+      case 'storage': return '請選取存放冷藏或一般批次倉庫，以利後續合夥加工尋料。';
       default: return '請依欄位輸入花生農民收購之原始數據。';
     }
   };
@@ -101,7 +114,7 @@ export const PurchaseDesk: React.FC = () => {
     if (typeof price !== 'number' || price <= 0) return setFormFeedback({ type: 'error', msg: '價格必須大於 0！' });
     if (typeof totalBags !== 'number' || totalBags <= 0) return setFormFeedback({ type: 'error', msg: '總數量（包）必須大於 0！' });
     if (typeof totalWeightCatty !== 'number' || totalWeightCatty <= 0) return setFormFeedback({ type: 'error', msg: '總重量（台斤）必須大於 0！' });
-    if (!storageLocation.trim()) return setFormFeedback({ type: 'error', msg: '請填寫存放地點！' });
+    if (!storageLocation.trim()) return setFormFeedback({ type: 'error', msg: '請選擇存放地點！' });
 
     setIsSubmitting(true);
     try {
@@ -113,7 +126,8 @@ export const PurchaseDesk: React.FC = () => {
         price,
         totalBags,
         totalWeightCatty,
-        storageLocation: storageLocation.trim()
+        storageLocation: storageLocation.trim(),
+        isResume: isResume
       });
 
       setFormFeedback({
@@ -125,11 +139,14 @@ export const PurchaseDesk: React.FC = () => {
 
       // Clear Form Fields
       setFarmerName('');
+      setIsResume(false);
       setLocation('');
       setPrice('');
       setTotalBags('');
       setTotalWeightCatty('');
-      setStorageLocation('');
+      // If we cleared, let's keep defaults if possible, else reset
+      setStorageLocation(storageLocations[0] || '');
+      setVariety(varieties[0] || '');
       setCustomVariety('');
       
       // Auto open QR label context for immediate printing/viewing
@@ -234,7 +251,7 @@ export const PurchaseDesk: React.FC = () => {
               </tr>
               <tr>
                 <td class="label">生產農民：</td>
-                <td>${activeQrRecord?.farmerName}</td>
+                <td>${activeQrRecord?.farmerName}${activeQrRecord?.isResume ? ' <span style="display: inline-block; color: #15803d; background-color: #f0fdf4; border: 1px solid #bbf7d0; padding: 1px 5px; border-radius: 4px; font-size: 11px; margin-left: 6px; font-weight: bold; vertical-align: middle;">履歷</span>' : ''}</td>
               </tr>
               <tr>
                 <td class="label">花生品種：</td>
@@ -342,6 +359,18 @@ export const PurchaseDesk: React.FC = () => {
                     className="w-full rounded-xl border border-slate-200 py-2.5 pl-9 pr-3 text-sm outline-none transition focus:border-amber-500 focus:ring-1 focus:ring-amber-500"
                   />
                 </div>
+                <div className="mt-2.5 flex items-center">
+                  <input
+                    id="is-resume-checkbox"
+                    type="checkbox"
+                    checked={isResume}
+                    onChange={(e) => setIsResume(e.target.checked)}
+                    className="h-4 w-4 rounded border-slate-300 text-amber-600 focus:ring-amber-500 cursor-pointer"
+                  />
+                  <label htmlFor="is-resume-checkbox" className="ml-2 text-xs font-semibold text-slate-700 select-none cursor-pointer">
+                    具備「履歷」認證
+                  </label>
+                </div>
               </div>
 
               {/* Purchase Date */}
@@ -397,13 +426,14 @@ export const PurchaseDesk: React.FC = () => {
                     value={variety}
                     onChange={(e) => setVariety(e.target.value)}
                     onFocus={() => handleAddField('variety')}
-                    className="w-full rounded-xl border border-slate-200 bg-white py-2.5 pl-9 pr-3 text-sm outline-none transition focus:border-amber-500 focus:ring-1 focus:ring-amber-500"
+                    className="w-full rounded-xl border border-slate-200 bg-white py-2.5 pl-9 pr-3 text-sm outline-none transition focus:border-amber-500 focus:ring-1 focus:ring-amber-500 hover:border-slate-300 cursor-pointer"
                   >
-                    <option value="台南14號">台南14號</option>
-                    <option value="黑金剛">黑金剛</option>
-                    <option value="台南9號">台南9號</option>
-                    <option value="紅莞香">紅莞香</option>
-                    <option value="其他">其他品種（自行輸入）</option>
+                    {varieties.map((v) => (
+                      <option key={v} value={v}>{v}</option>
+                    ))}
+                    {!varieties.includes('其他') && (
+                      <option value="其他">其他品種（自行輸入）</option>
+                    )}
                   </select>
                 </div>
               </div>
@@ -513,16 +543,18 @@ export const PurchaseDesk: React.FC = () => {
             {/* Storage Location */}
             <div>
               <label className="block text-xs font-semibold text-slate-600 mb-1.5 label-required">存放地點</label>
-              <input
+              <select
                 id="storage-input"
-                type="text"
                 required
                 value={storageLocation}
                 onChange={(e) => setStorageLocation(e.target.value)}
                 onFocus={() => handleAddField('storage')}
-                placeholder="例如：冷藏庫2號、農民自用倉庫B區"
-                className="w-full rounded-xl border border-slate-200 py-2.5 px-3 text-sm outline-none transition focus:border-amber-500 focus:ring-1 focus:ring-amber-500"
-              />
+                className="w-full rounded-xl border border-slate-200 bg-white py-2.5 px-3 text-sm outline-none transition focus:border-amber-500 focus:ring-1 focus:ring-amber-500 hover:border-slate-300 cursor-pointer"
+              >
+                {storageLocations.map((loc) => (
+                  <option key={loc} value={loc}>{loc}</option>
+                ))}
+              </select>
             </div>
 
             {/* Submission Status Feedback */}
@@ -620,6 +652,11 @@ export const PurchaseDesk: React.FC = () => {
                         <div>
                           <div className="flex items-center space-x-2">
                             <span className="text-base font-bold text-slate-800">{p.farmerName}</span>
+                            {p.isResume && (
+                              <span className="inline-flex items-center rounded-md bg-emerald-50 px-2 py-0.5 text-xs font-semibold text-emerald-700 border border-emerald-100">
+                                履歷
+                              </span>
+                            )}
                             <span className="inline-flex items-center rounded-md bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-700 border border-amber-100">
                               {p.variety}
                             </span>
@@ -737,7 +774,14 @@ export const PurchaseDesk: React.FC = () => {
               <div className="rounded-xl border border-amber-200/50 bg-amber-100/35 p-4 space-y-2 mb-5">
                 <div className="flex justify-between text-xs border-b border-amber-200/40 pb-1.5">
                   <span className="font-semibold text-slate-500">來源農民：</span>
-                  <span className="font-bold text-slate-800">{activeQrRecord.farmerName}</span>
+                  <span className="font-bold text-slate-800 flex items-center">
+                    {activeQrRecord.farmerName}
+                    {activeQrRecord.isResume && (
+                      <span className="ml-1.5 inline-flex items-center rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700 border border-emerald-100">
+                        履歷
+                      </span>
+                    )}
+                  </span>
                 </div>
                 <div className="flex justify-between text-xs border-b border-amber-200/40 pb-1.5">
                   <span className="font-semibold text-slate-500">作物種類：</span>

@@ -1,0 +1,29 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Test connection path (Required for connection check on boot)
+    match /test/{document} {
+      allow read: if true;
+    }
+
+    // Purchases Collection
+    match /purchases/{purchaseId} {
+      allow read, write: if true;
+    }
+
+    // Shelling Batches Collection
+    match /shelling_batches/{batchId} {
+      allow read, write: if true;
+    }
+
+    // Settings Collection (Admin passwords, etc.)
+    match /settings/{settingId} {
+      allow read, write: if true;
+    }
+  }
+}

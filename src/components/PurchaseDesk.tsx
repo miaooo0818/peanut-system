@@ -28,7 +28,7 @@ import { PurchaseRecord } from '../types';
 import { generateQrCode } from '../utils/qrcode';
 
 export const PurchaseDesk: React.FC = () => {
-  const { purchases, addPurchase, isOnline, isLoading, varieties, storageLocations } = useDatabase();
+  const { purchases, addPurchase, isOnline, isLoading, varieties, storageLocations, transporters } = useDatabase();
 
   const [farmerName, setFarmerName] = useState('');
   const [isResume, setIsResume] = useState(false);
@@ -40,6 +40,11 @@ export const PurchaseDesk: React.FC = () => {
   const [totalBags, setTotalBags] = useState<number | ''>('');
   const [totalWeightCatty, setTotalWeightCatty] = useState<number | ''>('');
   const [storageLocation, setStorageLocation] = useState('');
+  
+  // New payment and transporter state
+  const [paymentStatus, setPaymentStatus] = useState<'paid' | 'unpaid'>('unpaid');
+  const [transporterName, setTransporterName] = useState('');
+  const [transporterFeeStatus, setTransporterFeeStatus] = useState<'paid' | 'unpaid'>('unpaid');
 
   // UI state
   const [filterText, setFilterText] = useState('');
@@ -64,6 +69,12 @@ export const PurchaseDesk: React.FC = () => {
       setStorageLocation(storageLocations[0]);
     }
   }, [storageLocations, storageLocation]);
+
+  useEffect(() => {
+    if (transporters && transporters.length > 0 && !transporterName) {
+      setTransporterName(transporters[0]);
+    }
+  }, [transporters, transporterName]);
 
   useEffect(() => {
     if (activeQrRecord) {
@@ -127,7 +138,10 @@ export const PurchaseDesk: React.FC = () => {
         totalBags,
         totalWeightCatty,
         storageLocation: storageLocation.trim(),
-        isResume: isResume
+        isResume: isResume,
+        paymentStatus,
+        transporterName,
+        transporterFeeStatus
       });
 
       setFormFeedback({
@@ -148,6 +162,9 @@ export const PurchaseDesk: React.FC = () => {
       setStorageLocation(storageLocations[0] || '');
       setVariety(varieties[0] || '');
       setCustomVariety('');
+      setPaymentStatus('unpaid');
+      setTransporterName(transporters[0] || '');
+      setTransporterFeeStatus('unpaid');
       
       // Auto open QR label context for immediate printing/viewing
       setActiveQrRecord(added);
@@ -557,6 +574,59 @@ export const PurchaseDesk: React.FC = () => {
               </select>
             </div>
 
+            {/* Logistics and Payment Section */}
+            <div className="p-4 bg-amber-50/20 rounded-2xl border border-amber-100/40 space-y-3">
+              <h4 className="text-xs font-bold text-amber-800 tracking-wider uppercase">收付款與物流設定</h4>
+              
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {/* Farmer Payment Status */}
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1.5">收購付款狀態</label>
+                  <select
+                    id="payment-status-select"
+                    value={paymentStatus}
+                    onChange={(e) => setPaymentStatus(e.target.value as 'paid' | 'unpaid')}
+                    className="w-full rounded-xl border border-slate-200 bg-white py-2 px-3 text-sm outline-none transition focus:border-amber-500 focus:ring-1 focus:ring-amber-500 hover:border-slate-300 cursor-pointer"
+                  >
+                    <option value="unpaid">未結清</option>
+                    <option value="paid">已結清</option>
+                  </select>
+                </div>
+
+                {/* Transporter */}
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1.5">運送人員</label>
+                  <select
+                    id="transporter-select"
+                    value={transporterName}
+                    onChange={(e) => setTransporterName(e.target.value)}
+                    className="w-full rounded-xl border border-slate-200 bg-white py-2 px-3 text-sm outline-none transition focus:border-amber-500 focus:ring-1 focus:ring-amber-500 hover:border-slate-300 cursor-pointer"
+                  >
+                    {transporters.map((t) => (
+                      <option key={t} value={t}>{t}</option>
+                    ))}
+                    {transporters.length === 0 && (
+                      <option value="">無 (請至後台編輯名單)</option>
+                    )}
+                  </select>
+                </div>
+
+                {/* Transporter Fee Status */}
+                <div className="sm:col-span-2">
+                  <label className="block text-xs font-semibold text-slate-600 mb-1.5">運送費用結清</label>
+                  <select
+                    id="transporter-fee-select"
+                    value={transporterFeeStatus}
+                    onChange={(e) => setTransporterFeeStatus(e.target.value as 'paid' | 'unpaid')}
+                    className="w-full rounded-xl border border-slate-200 bg-white py-2 px-3 text-sm outline-none transition focus:border-amber-500 focus:ring-1 focus:ring-amber-500 hover:border-slate-300 cursor-pointer"
+                  >
+                    <option value="unpaid">未結清</option>
+                    <option value="paid">已結清</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
             {/* Submission Status Feedback */}
             {formFeedback && (
               <div className={`p-3 rounded-xl border text-xs text-center font-medium ${
@@ -697,6 +767,29 @@ export const PurchaseDesk: React.FC = () => {
                         <div className="text-xs">
                           <span className="text-slate-400 block mb-0.5">收貨單價</span>
                           <span className="font-semibold text-slate-700 font-mono">${p.price} / 台斤</span>
+                        </div>
+                        <div className="text-xs">
+                          <span className="text-slate-400 block mb-0.5">收購付款</span>
+                          <span className={`inline-flex items-center rounded-md px-2 py-0.5 text-[10px] font-semibold ${
+                            p.paymentStatus === 'paid'
+                              ? 'bg-emerald-50 text-emerald-700 border border-emerald-100'
+                              : 'bg-rose-50 text-rose-700 border border-rose-100'
+                          }`}>
+                            {p.paymentStatus === 'paid' ? '已結清' : '未結清'}
+                          </span>
+                        </div>
+                        <div className="text-xs col-span-2">
+                          <span className="text-slate-400 block mb-0.5">運送人員 & 運費結清</span>
+                          <span className="font-semibold text-slate-700 text-xs flex items-center space-x-1.5">
+                            <span>{p.transporterName || '未指定'}</span>
+                            <span className={`inline-flex items-center rounded-md px-1.5 py-0.2 text-[10px] font-semibold ${
+                              p.transporterFeeStatus === 'paid'
+                                ? 'bg-emerald-50 text-emerald-600 border border-emerald-100'
+                                : 'bg-rose-50 text-rose-600 border border-rose-100'
+                            }`}>
+                              {p.transporterFeeStatus === 'paid' ? '運費已結' : '運費未結'}
+                            </span>
+                          </span>
                         </div>
                       </div>
 

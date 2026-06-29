@@ -27,6 +27,7 @@ interface DatabaseContextType {
   isSyncing: boolean;
   varieties: string[];
   storageLocations: string[];
+  transporters: string[];
   // Actions
   addPurchase: (record: Omit<PurchaseRecord, 'id' | 'createdAt' | 'updatedAt'>) => Promise<PurchaseRecord>;
   updatePurchase: (id: string, updates: Partial<PurchaseRecord>) => Promise<void>;
@@ -36,7 +37,7 @@ interface DatabaseContextType {
   setupAdminPassword: (password: string) => Promise<void>;
   verifyAdminPassword: (password: string) => Promise<boolean>;
   triggerManualSync: () => Promise<number>;
-  updateOptions: (varieties: string[], storageLocations: string[]) => Promise<void>;
+  updateOptions: (varieties: string[], storageLocations: string[], transporters?: string[]) => Promise<void>;
 }
 
 const DatabaseContext = createContext<DatabaseContextType | undefined>(undefined);
@@ -80,6 +81,19 @@ export const DatabaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       return ['冷藏庫1號', '冷藏庫2號', 'A棟倉庫', 'B棟倉庫'];
     } catch {
       return ['冷藏庫1號', '冷藏庫2號', 'A棟倉庫', 'B棟倉庫'];
+    }
+  });
+
+  const [transporters, setTransporters] = useState<string[]>(() => {
+    try {
+      const t = localStorage.getItem('peanut_transporters');
+      if (t) {
+        const parsed = JSON.parse(t);
+        if (Array.isArray(parsed)) return parsed;
+      }
+      return ['陳司機', '張司機', '林司機', '王司機'];
+    } catch {
+      return ['陳司機', '張司機', '林司機', '王司機'];
     }
   });
 
@@ -196,6 +210,10 @@ export const DatabaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
             if (Array.isArray(data.storageLocations)) {
               setStorageLocations(data.storageLocations);
               localStorage.setItem('peanut_storage_locations', JSON.stringify(data.storageLocations));
+            }
+            if (Array.isArray(data.transporters)) {
+              setTransporters(data.transporters);
+              localStorage.setItem('peanut_transporters', JSON.stringify(data.transporters));
             }
           }
         }
@@ -498,17 +516,21 @@ export const DatabaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   };
 
   // Update Options Action
-  const updateOptions = async (newVarieties: string[], newStorageLocations: string[]): Promise<void> => {
+  const updateOptions = async (newVarieties: string[], newStorageLocations: string[], newTransporters?: string[]): Promise<void> => {
+    const finalTransporters = newTransporters !== undefined ? newTransporters : transporters;
     setVarieties(newVarieties);
     setStorageLocations(newStorageLocations);
+    setTransporters(finalTransporters);
     localStorage.setItem('peanut_varieties', JSON.stringify(newVarieties));
     localStorage.setItem('peanut_storage_locations', JSON.stringify(newStorageLocations));
+    localStorage.setItem('peanut_transporters', JSON.stringify(finalTransporters));
 
     if (isOnline) {
       try {
         await setDoc(doc(db, 'settings', 'options'), {
           varieties: newVarieties,
-          storageLocations: newStorageLocations
+          storageLocations: newStorageLocations,
+          transporters: finalTransporters
         });
       } catch (err) {
         console.warn("Offline option saving:", err);
@@ -526,6 +548,7 @@ export const DatabaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       isSyncing,
       varieties,
       storageLocations,
+      transporters,
       addPurchase,
       updatePurchase,
       deletePurchase,

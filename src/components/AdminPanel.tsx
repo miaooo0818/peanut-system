@@ -27,7 +27,10 @@ import {
   Clock,
   HelpCircle,
   CheckCircle,
-  X
+  X,
+  Truck,
+  Search,
+  Filter
 } from 'lucide-react';
 import { useDatabase } from '../context/DatabaseContext';
 import { PurchaseRecord, ShellingBatch } from '../types';
@@ -45,6 +48,7 @@ export const AdminPanel: React.FC = () => {
     verifyAdminPassword,
     varieties,
     storageLocations,
+    transporters,
     updateOptions
   } = useDatabase();
 
@@ -59,6 +63,12 @@ export const AdminPanel: React.FC = () => {
   // Tab Manager State
   const [activeTab, setActiveTab] = useState<'inventory' | 'shelling' | 'reports' | 'options'>('inventory');
 
+  // Purchase List Search & Filter States
+  const [purchaseFilterFarmer, setPurchaseFilterFarmer] = useState('');
+  const [purchaseFilterStartDate, setPurchaseFilterStartDate] = useState('');
+  const [purchaseFilterEndDate, setPurchaseFilterEndDate] = useState('');
+  const [purchaseFilterTransporter, setPurchaseFilterTransporter] = useState('');
+
   // Editing state for Purchases (Inline modal)
   const [editingPurchase, setEditingPurchase] = useState<PurchaseRecord | null>(null);
   const [editFarmerName, setEditFarmerName] = useState('');
@@ -70,10 +80,14 @@ export const AdminPanel: React.FC = () => {
   const [editTotalBags, setEditTotalBags] = useState<number>(0);
   const [editTotalWeightCatty, setEditTotalWeightCatty] = useState<number>(0);
   const [editStorageLocation, setEditStorageLocation] = useState('');
+  const [editPaymentStatus, setEditPaymentStatus] = useState<'paid' | 'unpaid'>('unpaid');
+  const [editTransporterName, setEditTransporterName] = useState('');
+  const [editTransporterFeeStatus, setEditTransporterFeeStatus] = useState<'paid' | 'unpaid'>('unpaid');
 
   // Selections Panel State (Settings Tab)
   const [newVariety, setNewVariety] = useState('');
   const [newStorageLocation, setNewStorageLocation] = useState('');
+  const [newTransporter, setNewTransporter] = useState('');
 
   // Shelling Form States
   const [selectedSourceIds, setSelectedSourceIds] = useState<string[]>([]);
@@ -295,6 +309,9 @@ export const AdminPanel: React.FC = () => {
     setEditTotalBags(p.totalBags);
     setEditTotalWeightCatty(p.totalWeightCatty);
     setEditStorageLocation(p.storageLocation);
+    setEditPaymentStatus((p.paymentStatus as 'paid' | 'unpaid') || 'unpaid');
+    setEditTransporterName(p.transporterName || '');
+    setEditTransporterFeeStatus((p.transporterFeeStatus as 'paid' | 'unpaid') || 'unpaid');
   };
 
   const handleEditSave = async (e: React.FormEvent) => {
@@ -302,7 +319,7 @@ export const AdminPanel: React.FC = () => {
     if (!editingPurchase) return;
 
     if (!editFarmerName.trim() || !editLocation.trim() || !editVariety.trim() || !editStorageLocation.trim() || editPrice <= 0 || editTotalBags <= 0 || editTotalWeightCatty <= 0) {
-      alert("請確實填寫所有必要欄位與數值！");
+      showCustomAlert("輸入錯誤", "請確實填寫所有必要欄位與數值！");
       return;
     }
 
@@ -316,26 +333,29 @@ export const AdminPanel: React.FC = () => {
         price: editPrice,
         totalBags: editTotalBags,
         totalWeightCatty: editTotalWeightCatty,
-        storageLocation: editStorageLocation.trim()
+        storageLocation: editStorageLocation.trim(),
+        paymentStatus: editPaymentStatus,
+        transporterName: editTransporterName,
+        transporterFeeStatus: editTransporterFeeStatus
       });
       setEditingPurchase(null);
-      alert("收購紀錄修改成功！");
+      showCustomAlert("成功", "收購紀錄修改成功！", "success");
     } catch (err) {
       console.error(err);
-      alert("修改失敗，請檢驗系統環境。");
+      showCustomAlert("錯誤", "修改失敗，請檢驗系統環境。");
     }
   };
 
   const handleDeletePurchaseClick = async (id: string, name: string) => {
-    if (confirm(`確定要永久刪除農民「${name}」的收購紀錄嗎？這項動作無法復原。`)) {
+    showCustomConfirm("刪除紀錄", `確定要永久刪除農民「${name}」的收購紀錄嗎？這項動作無法復原。`, async () => {
       try {
         await deletePurchase(id);
-        alert("該筆收購紀錄已成功移除。");
+        showCustomAlert("成功", "該筆收購紀錄已成功移除。", "success");
       } catch (err) {
         console.error(err);
-        alert("刪除失敗。");
+        showCustomAlert("錯誤", "刪除失敗。");
       }
-    }
+    });
   };
 
   // Find remaining bags of a purchase record, considering other shelling batches.
@@ -465,15 +485,19 @@ export const AdminPanel: React.FC = () => {
   };
 
   const handleDeleteShellingClick = async (id: string) => {
-    if (confirm("確認刪除該筆脫殼批次報告？這會將加工紀錄自資料庫完全抹去。")) {
-      try {
-        await deleteShellingBatch(id);
-        alert("已成功移除該代工脫殼報告。");
-      } catch (err) {
-        console.error(err);
-        alert("移除失敗。");
+    showCustomConfirm(
+      "刪除脫殼報告",
+      "確認刪除該筆脫殼批次報告？這會將加工紀錄自資料庫完全抹去。",
+      async () => {
+        try {
+          await deleteShellingBatch(id);
+          showCustomAlert("成功", "已成功移除該代工脫殼報告。", "success");
+        } catch (err) {
+          console.error(err);
+          showCustomAlert("錯誤", "移除失敗。");
+        }
       }
-    }
+    );
   };
 
   // Export Shelling Batch to a single workbook containing exactly two separate Worksheets
@@ -588,7 +612,7 @@ export const AdminPanel: React.FC = () => {
       XLSX.writeFile(wb, `加工批次與收購報告明細_批號${batch.id.substring(0, 6)}.xlsx`);
     } catch (err) {
       console.error("Failed to export with multiple worksheets:", err);
-      alert("匯出 Excel 發生錯誤，請聯絡管理員。");
+      showCustomAlert("錯誤", "匯出 Excel 發生錯誤，請聯絡管理員。");
     }
   };
 
@@ -598,7 +622,7 @@ export const AdminPanel: React.FC = () => {
       .sort((a, b) => b.date.localeCompare(a.date)); // Sort by date descending
 
     if (filteredBatches.length === 0) {
-      alert("選取區間內無任何脫殼加工批次紀錄！");
+      showCustomAlert("提示", "選取區間內無任何脫殼加工批次紀錄！");
       return;
     }
 
@@ -755,7 +779,7 @@ export const AdminPanel: React.FC = () => {
       XLSX.writeFile(wb, `花生脫殼代工區間報表_${exportStartDate}_至_${exportEndDate}.xlsx`);
     } catch (err) {
       console.error("Failed to export by date range:", err);
-      alert("匯出區間報表發生錯誤，請聯絡管理員。");
+      showCustomAlert("錯誤", "匯出區間報表發生錯誤，請聯絡管理員。");
     }
   };
 
@@ -834,84 +858,284 @@ export const AdminPanel: React.FC = () => {
       <div>
         
         {/* =============== Tab 1: EDIT PURCHASES (INVENTORY) =============== */}
-        {activeTab === 'inventory' && (
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-            <div className="p-5 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
-              <div>
-                <h3 className="text-base font-bold text-slate-800">花生原始採購紀錄總覽</h3>
-                <p className="text-xs text-slate-500">管理者在此可以修改或移除農民前期繳交的花生資料，並與前端自動同步。</p>
-              </div>
-            </div>
+        {activeTab === 'inventory' && (() => {
+          const filteredPurchases = purchases.filter((p) => {
+            // 1. Farmer Name search (case-insensitive, handles whitespace)
+            if (purchaseFilterFarmer.trim()) {
+              const searchWord = purchaseFilterFarmer.trim().toLowerCase();
+              if (!p.farmerName.toLowerCase().includes(searchWord)) {
+                return false;
+              }
+            }
 
-            <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse">
-                <thead>
-                  <tr className="border-b border-slate-200 bg-slate-50 font-semibold text-xs text-slate-600 uppercase tracking-widest font-mono">
-                    <th className="py-3 px-4">農民資訊</th>
-                    <th className="py-3 px-4">收購地點</th>
-                    <th className="py-3 px-4">花生規格</th>
-                    <th className="py-3 px-4">存放地點</th>
-                    <th className="py-3 px-4 text-right">單價</th>
-                    <th className="py-3 px-4 text-right">估值總額</th>
-                    <th className="py-3 px-4 text-center">操作</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 text-sm text-slate-700">
-                  {purchases.length === 0 ? (
-                    <tr>
-                      <td colSpan={7} className="text-center py-12 text-slate-400 text-xs">
-                        目前尚無任何收購紀錄，請先至收購前台登錄。
-                      </td>
+            // 2. Transporter filter
+            if (purchaseFilterTransporter) {
+              if (purchaseFilterTransporter === 'none') {
+                if (p.transporterName) return false;
+              } else {
+                if (p.transporterName !== purchaseFilterTransporter) {
+                  return false;
+                }
+              }
+            }
+
+            // 3. Date range filter
+            if (purchaseFilterStartDate) {
+              if (p.date < purchaseFilterStartDate) {
+                return false;
+              }
+            }
+            if (purchaseFilterEndDate) {
+              if (p.date > purchaseFilterEndDate) {
+                return false;
+              }
+            }
+
+            return true;
+          });
+
+          return (
+            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+              <div className="p-5 border-b border-slate-100 flex flex-col md:flex-row justify-between md:items-center gap-3 bg-slate-50/50">
+                <div>
+                  <h3 className="text-base font-bold text-slate-800">花生原始收購紀錄總覽</h3>
+                  <p className="text-xs text-slate-500">管理者在此可以篩選、修改或移除農民前期繳交的花生資料，並與前端自動同步。</p>
+                </div>
+                {/* Simple badge showing filter status */}
+                {(purchaseFilterFarmer || purchaseFilterStartDate || purchaseFilterEndDate || purchaseFilterTransporter) && (
+                  <span className="self-start md:self-auto inline-flex items-center space-x-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-50 text-amber-800 border border-amber-100/60 shadow-sm">
+                    <Filter className="h-3 w-3" />
+                    <span>已啟用篩選 (符合: {filteredPurchases.length} 筆 / 總共: {purchases.length} 筆)</span>
+                  </span>
+                )}
+              </div>
+
+              {/* Search & Filter Bar */}
+              <div className="p-4 bg-slate-50/40 border-b border-slate-200/60 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 items-end">
+                {/* Farmer Name Search */}
+                <div className="space-y-1.5">
+                  <label className="block text-xs font-bold text-slate-600 tracking-wider">農民姓名搜尋</label>
+                  <div className="relative">
+                    <span className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                      <Search className="h-4 w-4 text-slate-400" />
+                    </span>
+                    <input
+                      type="text"
+                      placeholder="輸入姓名關鍵字..."
+                      value={purchaseFilterFarmer}
+                      onChange={(e) => setPurchaseFilterFarmer(e.target.value)}
+                      className="w-full pl-9 pr-3 py-1.5 text-sm bg-white border border-slate-200 rounded-xl outline-none transition focus:border-amber-500 focus:ring-1 focus:ring-amber-500 hover:border-slate-300 font-medium placeholder:text-slate-400"
+                    />
+                    {purchaseFilterFarmer && (
+                      <button
+                        onClick={() => setPurchaseFilterFarmer('')}
+                        className="absolute inset-y-0 right-0 pr-2.5 flex items-center text-slate-400 hover:text-slate-600 cursor-pointer"
+                      >
+                        <X className="h-4 w-4" />
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Date Range - Start Date */}
+                <div className="space-y-1.5">
+                  <label className="block text-xs font-bold text-slate-600 tracking-wider">收購起始日期</label>
+                  <div className="relative">
+                    <span className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                      <Calendar className="h-4 w-4 text-slate-400" />
+                    </span>
+                    <input
+                      type="date"
+                      value={purchaseFilterStartDate}
+                      onChange={(e) => setPurchaseFilterStartDate(e.target.value)}
+                      className="w-full pl-9 pr-3 py-1.5 text-sm bg-white border border-slate-200 rounded-xl outline-none transition focus:border-amber-500 focus:ring-1 focus:ring-amber-500 hover:border-slate-300 font-medium cursor-pointer"
+                    />
+                  </div>
+                </div>
+
+                {/* Date Range - End Date */}
+                <div className="space-y-1.5">
+                  <label className="block text-xs font-bold text-slate-600 tracking-wider">收購結束日期</label>
+                  <div className="relative">
+                    <span className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                      <Calendar className="h-4 w-4 text-slate-400" />
+                    </span>
+                    <input
+                      type="date"
+                      value={purchaseFilterEndDate}
+                      onChange={(e) => setPurchaseFilterEndDate(e.target.value)}
+                      className="w-full pl-9 pr-3 py-1.5 text-sm bg-white border border-slate-200 rounded-xl outline-none transition focus:border-amber-500 focus:ring-1 focus:ring-amber-500 hover:border-slate-300 font-medium cursor-pointer"
+                    />
+                  </div>
+                </div>
+
+                {/* Transporter Dropdown & Reset Action */}
+                <div className="space-y-1.5 flex gap-2">
+                  <div className="flex-1 space-y-1.5">
+                    <label className="block text-xs font-bold text-slate-600 tracking-wider">運送人員</label>
+                    <select
+                      value={purchaseFilterTransporter}
+                      onChange={(e) => setPurchaseFilterTransporter(e.target.value)}
+                      className="w-full bg-white border border-slate-200 rounded-xl py-1.5 px-3 text-sm outline-none transition focus:border-amber-500 focus:ring-1 focus:ring-amber-500 hover:border-slate-300 font-medium cursor-pointer"
+                    >
+                      <option value="">全部運送人員</option>
+                      <option value="none">未指定 (無)</option>
+                      {transporters.map((t) => (
+                        <option key={t} value={t}>{t}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {(purchaseFilterFarmer || purchaseFilterStartDate || purchaseFilterEndDate || purchaseFilterTransporter) && (
+                    <button
+                      onClick={() => {
+                        setPurchaseFilterFarmer('');
+                        setPurchaseFilterStartDate('');
+                        setPurchaseFilterEndDate('');
+                        setPurchaseFilterTransporter('');
+                      }}
+                      className="self-end h-[36px] px-3 bg-slate-100 hover:bg-slate-200 border border-slate-200/60 rounded-xl text-xs font-bold text-slate-600 flex items-center justify-center space-x-1.5 transition active:scale-95 cursor-pointer select-none"
+                      title="重設所有篩選"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                      <span>清空</span>
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="border-b border-slate-200 bg-slate-50 font-semibold text-xs text-slate-600 uppercase tracking-widest font-mono">
+                      <th className="py-3 px-4">農民資訊</th>
+                      <th className="py-3 px-4">收購地點</th>
+                      <th className="py-3 px-4">花生規格</th>
+                      <th className="py-3 px-4">存放地點</th>
+                      <th className="py-3 px-4 text-center">收購付款</th>
+                      <th className="py-3 px-4">運送人員/運費</th>
+                      <th className="py-3 px-4 text-right">單價</th>
+                      <th className="py-3 px-4 text-right">估值總額</th>
+                      <th className="py-3 px-4 text-center">操作</th>
                     </tr>
-                  ) : (
-                    purchases.map((p) => (
-                      <tr key={p.id} className="hover:bg-slate-50/50 transition">
-                        <td className="py-3 px-4">
-                          <div className="font-semibold text-slate-800">{p.farmerName}</div>
-                          <div className="flex items-center space-x-1.5 mt-0.5">
-                            <span className="text-[10px] font-mono bg-amber-50 px-1 border border-amber-100 text-amber-700 rounded">
-                              {p.variety}
-                            </span>
-                            <span className="text-[10px] text-slate-400 font-mono">{p.date}</span>
-                          </div>
-                        </td>
-                        <td className="py-3 px-4 font-normal text-slate-600">{p.location}</td>
-                        <td className="py-3 px-4 font-mono text-xs">
-                          {p.totalBags} 包 / <span className="font-semibold">{p.totalWeightCatty.toLocaleString()} 台斤</span>
-                        </td>
-                        <td className="py-3 px-4 text-xs font-semibold text-slate-600">{p.storageLocation}</td>
-                        <td className="py-3 px-4 text-right font-mono text-xs">${p.price} / 斤</td>
-                        <td className="py-3 px-4 text-right font-bold font-mono text-xs text-amber-600">
-                          ${(p.price * p.totalWeightCatty).toLocaleString()} 元
-                        </td>
-                        <td className="py-3 px-4 text-center">
-                          <div className="flex items-center justify-center space-x-2">
-                            <button
-                              onClick={() => handleEditOpen(p)}
-                              className="p-1 px-2 rounded-lg border border-slate-200 text-xs font-semibold text-slate-600 hover:bg-slate-100 transition flex items-center space-x-1 hover:text-amber-700"
-                              title="編輯此筆紀錄"
-                            >
-                              <Edit2 className="h-3 w-3" />
-                              <span>修改</span>
-                            </button>
-                            <button
-                              onClick={() => handleDeletePurchaseClick(p.id, p.farmerName)}
-                              className="p-1 px-2 rounded-lg border border-rose-100 text-xs font-semibold text-rose-600 hover:bg-rose-50 transition flex items-center space-x-1"
-                              title="刪除此筆紀錄"
-                            >
-                              <Trash2 className="h-3 w-3" />
-                              <span>刪除</span>
-                            </button>
-                          </div>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 text-sm text-slate-700">
+                    {purchases.length === 0 ? (
+                      <tr>
+                        <td colSpan={9} className="text-center py-12 text-slate-400 text-xs">
+                          目前尚無任何收購紀錄，請先至收購前台登錄。
                         </td>
                       </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
+                    ) : filteredPurchases.length === 0 ? (
+                      <tr>
+                        <td colSpan={9} className="text-center py-12 text-slate-400 text-xs font-medium space-y-2">
+                          <p>找不到符合篩選條件的收購紀錄。</p>
+                          <button
+                            onClick={() => {
+                              setPurchaseFilterFarmer('');
+                              setPurchaseFilterStartDate('');
+                              setPurchaseFilterEndDate('');
+                              setPurchaseFilterTransporter('');
+                            }}
+                            className="text-amber-600 hover:text-amber-700 font-bold underline cursor-pointer"
+                          >
+                            清除所有篩選條件
+                          </button>
+                        </td>
+                      </tr>
+                    ) : (
+                      filteredPurchases.map((p) => (
+                        <tr key={p.id} className="hover:bg-slate-50/50 transition">
+                          <td className="py-3 px-4">
+                            <div className="font-semibold text-slate-800">{p.farmerName}</div>
+                            <div className="flex items-center space-x-1.5 mt-0.5">
+                              <span className="text-[10px] font-mono bg-amber-50 px-1 border border-amber-100 text-amber-700 rounded">
+                                {p.variety}
+                              </span>
+                              <span className="text-[10px] text-slate-400 font-mono">{p.date}</span>
+                            </div>
+                          </td>
+                          <td className="py-3 px-4 font-normal text-slate-600">{p.location}</td>
+                          <td className="py-3 px-4 font-mono text-xs">
+                            {p.totalBags} 包 / <span className="font-semibold">{p.totalWeightCatty.toLocaleString()} 台斤</span>
+                          </td>
+                          <td className="py-3 px-4 text-xs font-semibold text-slate-600">{p.storageLocation}</td>
+                          <td className="py-3 px-4 text-center">
+                            <button
+                              onClick={async () => {
+                                const nextStatus = p.paymentStatus === 'paid' ? 'unpaid' : 'paid';
+                                try {
+                                  await updatePurchase(p.id, { paymentStatus: nextStatus });
+                                  showCustomAlert("成功", `付款狀態已切換為「${nextStatus === 'paid' ? '已結清' : '未結清'}」`, "success");
+                                } catch (err) {
+                                  console.error(err);
+                                  showCustomAlert("錯誤", "更新失敗。");
+                                }
+                              }}
+                              className={`inline-flex items-center rounded-md px-2 py-1 text-[11px] font-bold cursor-pointer border transition hover:opacity-85 active:scale-95 ${
+                                p.paymentStatus === 'paid'
+                                  ? 'bg-emerald-50 text-emerald-700 border-emerald-200 shadow-sm'
+                                  : 'bg-rose-50 text-rose-700 border-rose-200 shadow-sm'
+                              }`}
+                            >
+                              {p.paymentStatus === 'paid' ? '已結清' : '未結清'}
+                            </button>
+                          </td>
+                          <td className="py-3 px-4 text-xs">
+                            <div className="font-semibold text-slate-700">{p.transporterName || '未指定'}</div>
+                            <button
+                              onClick={async () => {
+                                const nextStatus = p.transporterFeeStatus === 'paid' ? 'unpaid' : 'paid';
+                                try {
+                                  await updatePurchase(p.id, { transporterFeeStatus: nextStatus });
+                                  showCustomAlert("成功", `運費狀態已切換為「${nextStatus === 'paid' ? '已結清' : '未結清'}」`, "success");
+                                } catch (err) {
+                                  console.error(err);
+                                  showCustomAlert("錯誤", "更新失敗。");
+                                }
+                              }}
+                              className={`inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-bold mt-1 cursor-pointer border transition hover:opacity-85 active:scale-95 ${
+                                p.transporterFeeStatus === 'paid'
+                                  ? 'bg-emerald-50 text-emerald-600 border-emerald-100 shadow-sm'
+                                  : 'bg-rose-50 text-rose-600 border-rose-100 shadow-sm'
+                              }`}
+                            >
+                              {p.transporterFeeStatus === 'paid' ? '運費已結' : '運費未結'}
+                            </button>
+                          </td>
+                          <td className="py-3 px-4 text-right font-mono text-xs">${p.price} / 斤</td>
+                          <td className="py-3 px-4 text-right font-bold font-mono text-xs text-amber-600">
+                            ${(p.price * p.totalWeightCatty).toLocaleString()} 元
+                          </td>
+                          <td className="py-3 px-4 text-center">
+                            <div className="flex items-center justify-center space-x-2">
+                              <button
+                                onClick={() => handleEditOpen(p)}
+                                className="p-1 px-2 rounded-lg border border-slate-200 text-xs font-semibold text-slate-600 hover:bg-slate-100 transition flex items-center space-x-1 hover:text-amber-700 cursor-pointer"
+                                title="編輯此筆紀錄"
+                              >
+                                <Edit2 className="h-3 w-3" />
+                                <span>修改</span>
+                              </button>
+                              <button
+                                onClick={() => handleDeletePurchaseClick(p.id, p.farmerName)}
+                                className="p-1 px-2 rounded-lg border border-rose-100 text-xs font-semibold text-rose-600 hover:bg-rose-50 transition flex items-center space-x-1 cursor-pointer"
+                                title="刪除此筆紀錄"
+                              >
+                                <Trash2 className="h-3 w-3" />
+                                <span>刪除</span>
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
             </div>
-          </div>
-        )}
+          );
+        })()}
 
         {/* =============== Tab 2: NEW SHELLING BATCH =============== */}
         {activeTab === 'shelling' && (
@@ -1291,7 +1515,7 @@ export const AdminPanel: React.FC = () => {
 
         {/* =============== Tab 4: SELECTION OPTIONS EDIT =============== */}
         {activeTab === 'options' && (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             
             {/* Peanut Varieties Configuration Card */}
             <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 space-y-4">
@@ -1453,6 +1677,90 @@ export const AdminPanel: React.FC = () => {
               </div>
             </div>
 
+            {/* Transporters (Delivery Personnel) Configuration Card */}
+            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 space-y-4">
+              <div>
+                <h3 className="text-base font-bold text-slate-800 flex items-center">
+                  <Truck className="h-5 w-5 text-amber-600 mr-2" />
+                  運送人員選單管理
+                </h3>
+                <p className="text-xs text-slate-500 mt-1">
+                  在這裡設定與管理收購運送司機/司事名單，設定後前台將能選擇對應運送人員。
+                </p>
+              </div>
+
+              {/* Add form */}
+              <form onSubmit={async (e) => {
+                e.preventDefault();
+                if (!newTransporter.trim()) return;
+                if (transporters.includes(newTransporter.trim())) {
+                  showCustomAlert("提示", "此運送人員已存在！");
+                  return;
+                }
+                const updated = [...transporters, newTransporter.trim()];
+                try {
+                  await updateOptions(varieties, storageLocations, updated);
+                  setNewTransporter('');
+                  showCustomAlert("成功", "運送人員新增成功！", "success");
+                } catch (err) {
+                  console.error(err);
+                  showCustomAlert("錯誤", "儲存失敗，請確認網路連線。");
+                }
+              }} className="flex gap-2">
+                <input
+                  type="text"
+                  required
+                  placeholder="輸入運送人員名字 (例如: 陳阿明)"
+                  value={newTransporter}
+                  onChange={(e) => setNewTransporter(e.target.value)}
+                  className="flex-1 rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-amber-500 font-medium"
+                />
+                <button
+                  type="submit"
+                  className="rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-semibold text-xs px-4 py-2 transition active:scale-[0.98] cursor-pointer"
+                >
+                  新增司機
+                </button>
+              </form>
+
+              {/* List of current options */}
+              <div className="border border-slate-100 rounded-xl divide-y divide-slate-100 max-h-64 overflow-y-auto">
+                {transporters.map((t) => (
+                  <div key={t} className="flex justify-between items-center py-2.5 px-4 text-sm font-medium text-slate-700 hover:bg-slate-50/50">
+                    <span>{t}</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        showCustomConfirm(
+                          "確認移除運送人員",
+                          `確定要刪除「${t}」運送司機嗎？歷史收購資料中的運送人員資訊將不受影響。`,
+                          async () => {
+                            const updated = transporters.filter(x => x !== t);
+                            try {
+                              await updateOptions(varieties, storageLocations, updated);
+                              showCustomAlert("成功", "運送司機已由選單移除。", "success");
+                            } catch (err) {
+                              console.error(err);
+                              showCustomAlert("錯誤", "更新失敗，請確認網路。");
+                            }
+                          }
+                        );
+                      }}
+                      className="text-slate-400 hover:text-rose-600 p-1 rounded-lg hover:bg-rose-50 transition cursor-pointer"
+                      title="刪除此選項"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  </div>
+                ))}
+                {transporters.length === 0 && (
+                  <div className="py-6 text-center text-slate-400 text-xs font-medium text-slate-400">
+                    目前尚未登錄任何運送司機。
+                  </div>
+                )}
+              </div>
+            </div>
+
           </div>
         )}
       </div>
@@ -1603,6 +1911,57 @@ export const AdminPanel: React.FC = () => {
                       <option value={editStorageLocation}>{editStorageLocation}</option>
                     )}
                   </select>
+                </div>
+
+                <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-200/60 space-y-3">
+                  <span className="text-xs font-bold text-slate-700 block tracking-wide">結清與物流編輯</span>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div>
+                      <label className="block text-[11px] font-semibold text-slate-600 mb-1">收購付款狀態</label>
+                      <select
+                        id="edit-payment-status"
+                        value={editPaymentStatus}
+                        onChange={(e) => setEditPaymentStatus(e.target.value as 'paid' | 'unpaid')}
+                        className="w-full rounded-lg border border-slate-200 bg-white py-1.5 px-2.5 text-xs outline-none focus:border-amber-500 cursor-pointer"
+                      >
+                        <option value="unpaid">未結清</option>
+                        <option value="paid">已結清</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-semibold text-slate-600 mb-1">運送人員</label>
+                      <select
+                        id="edit-transporter-name"
+                        value={editTransporterName}
+                        onChange={(e) => setEditTransporterName(e.target.value)}
+                        className="w-full rounded-lg border border-slate-200 bg-white py-1.5 px-2.5 text-xs outline-none focus:border-amber-500 cursor-pointer"
+                      >
+                        {transporters.map((t) => (
+                          <option key={t} value={t}>{t}</option>
+                        ))}
+                        {!transporters.includes(editTransporterName) && editTransporterName && (
+                          <option value={editTransporterName}>{editTransporterName}</option>
+                        )}
+                        {transporters.length === 0 && !editTransporterName && (
+                          <option value="">無</option>
+                        )}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-semibold text-slate-600 mb-1">運送費用結清</label>
+                      <select
+                        id="edit-transporter-fee"
+                        value={editTransporterFeeStatus}
+                        onChange={(e) => setEditTransporterFeeStatus(e.target.value as 'paid' | 'unpaid')}
+                        className="w-full rounded-lg border border-slate-200 bg-white py-1.5 px-2.5 text-xs outline-none focus:border-amber-500 cursor-pointer"
+                      >
+                        <option value="unpaid">未結清</option>
+                        <option value="paid">已結清</option>
+                      </select>
+                    </div>
+                  </div>
                 </div>
 
                 <div className="flex space-x-3 pt-4 justify-end border-t border-slate-100">

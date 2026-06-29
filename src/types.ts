@@ -17,6 +17,9 @@ export interface PurchaseRecord {
   updatedAt: string; // ISO String
   isSynced?: boolean; // True if saved to Firebase, false if temporarily in offline storage
   isResume?: boolean; // 是否為「履歷」
+  paymentStatus?: 'paid' | 'unpaid' | string; // 收購付款狀態: 'paid' (已結清) 或 'unpaid' (未結清)
+  transporterName?: string; // 運送人員姓名
+  transporterFeeStatus?: 'paid' | 'unpaid' | string; // 運送人員費用結清狀態: 'paid' (已結清) 或 'unpaid' (未結清)
 }
 
 export interface ShellingBatch {
